@@ -6,6 +6,7 @@
 
 ## 📌 Table of Contents
 
+1. [Project Plan](#project-plan) 
 1. [Vision & Overview](#vision--overview)
 2. [How It Works](#how-it-works)
 3. [Architecture](#architecture)
@@ -24,6 +25,11 @@
 16. [Roadmap](#roadmap)
 17. [FAQ](#faq)
 18. [License](#license)
+
+---
+
+## 📅 Project Plan
+See the full project Gantt chart and phase breakdown → [ROADMAP.md](./ROADMAP.md)
 
 ---
 
