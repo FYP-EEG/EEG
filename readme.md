@@ -29,7 +29,7 @@
 ---
 
 ## 📅 Project Plan
-See the full project Gantt chart and phase breakdown → [ROADMAP.md](./ROADMAP.md)
+See the full project Gantt chart and phase breakdown → [ROADMAP.md](./roadmap.md)
 
 ---
 

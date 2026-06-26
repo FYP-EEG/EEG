@@ -257,14 +257,14 @@ PUBLIC DATA (Phase 4-5)          OWN DATA (Phase 8-10)
 
 | Milestone | Target Date | Success Criteria |
 |-----------|-------------|-----------------|
-| 🏁 **Data Ready** | Feb 2025 | 5+ datasets downloaded, preprocessed, versioned |
-| 🏁 **Core API Working** | Mar 2025 | `add_button()` + `listen()` works with simulated device |
-| 🏁 **Public Model Trained** | Apr 2025 | >75% accuracy on BCI Competition IV 2a |
-| 🏁 **Hardware Working** | May 2025 | Real-time stream from Muse + OpenBCI |
-| 🏁 **Own Data Collected** | Jun 2025 | 5+ subjects × 3 sessions recorded |
-| 🏁 **Transfer Complete** | Jul 2025 | >80% accuracy on own data after transfer |
-| 🚀 **Beta Release** | Aug 2025 | PyPI `pip install mindcontrol-eeg` works |
-| 🚀 **Stable v1.0.0** | Sep 2025 | Full test suite passing, docs complete |
+| 🏁 **Data Ready** | Aug 2026 | 5+ datasets downloaded, preprocessed, versioned |
+| 🏁 **Core API Working** | Sep 2026 | `add_button()` + `listen()` works with simulated device |
+| 🏁 **Public Model Trained** | Oct 2026 | >75% accuracy on BCI Competition IV 2a |
+| 🏁 **Hardware Working** | Nov 2026 | Real-time stream from Muse + OpenBCI |
+| 🏁 **Own Data Collected** | Dec 2026 | 5+ subjects × 3 sessions recorded |
+| 🏁 **Transfer Complete** | Jan 2027 | >80% accuracy on own data after transfer |
+| 🚀 **Beta Release** | Feb 2027 | PyPI `pip install mindcontrol-eeg` works |
+| 🚀 **Stable v1.0.0** | Mar 2027 | Full test suite passing, docs complete |
 
 ---
 
