@@ -1,147 +1,188 @@
-# Git Workflow Automation GUI
+# Safe GitHub Automation GUI
 
-This workspace contains `git_workflow_gui.py`, a Windows-friendly Python/Tkinter app you can turn into an `.exe`.
+I fixed/replaced the broken script with a safer version:
 
-## What it does
+```text
+git_workflow_gui.py
+```
 
-The app provides a UI for the workflow you described:
+## Why the old script was risky
 
-1. **Get up-to-date files**
-   - `git fetch origin`
-   - `git checkout dev`
-   - `git pull origin dev`
-2. **Open VS Code** for the repository folder.
-3. **Choose changed files** from a checkbox-style list.
-4. **Automatically use Git LFS pointers for large selected files** above the configured MB threshold.
-5. Ask for a branch name such as `features/something`.
-6. Ask for a commit message.
-7. Commit and push to that branch.
-8. Open the GitHub compare page for code review:
-   - `https://github.com/<owner>/<repo>/compare/dev...features/something?expand=1`
+The old flow did this near commit time:
 
-## Requirements
+```bash
+git checkout dev
+git pull origin dev
+git checkout -b features/something
+```
 
-Install these on the machine where you run the app:
+That can be dangerous if you already edited files, because switching branches/pulling while files are modified can cause conflicts or mix work into the wrong branch.
 
-- Python 3.10+
-- Git
-- VS Code, with the `code` command available in PATH
-- Git LFS if you will push large files: <https://git-lfs.com/>
-- PyInstaller, only needed to build the `.exe`
+The new script uses a safer workflow:
 
-## Build the EXE
+1. Safely update `dev`
+2. Create/switch to a feature branch before editing
+3. Open VS Code
+4. Edit files
+5. Select changed files
+6. Commit selected files only
+7. Push branch
+8. Open GitHub compare/PR link
 
-Open Command Prompt or PowerShell in the folder containing `git_workflow_gui.py`, then run:
+## New safety features
+
+### 1. Refuses risky `dev` updates
+
+The app will not pull `dev` if you have uncommitted files.
+
+It shows a message telling you to commit, stash, or discard first.
+
+### 2. Uses fast-forward only
+
+For updating `dev`, it uses:
+
+```bash
+git pull --ff-only origin dev
+```
+
+This avoids surprise merge commits.
+
+### 3. Detects ahead/behind/diverged `dev`
+
+If local `dev` is:
+
+- behind `origin/dev`: it safely fast-forwards
+- ahead of `origin/dev`: it stops and asks you to handle it manually
+- ahead and behind: it stops because branches diverged
+
+### 4. Encourages feature branches before editing
+
+New button:
+
+```text
+2. Create/switch feature branch
+```
+
+Use this before opening VS Code and editing.
+
+### 5. Safer commit behavior
+
+When committing:
+
+- If you are already on the feature branch, it commits there.
+- If you are on `dev` with uncommitted files and the target feature branch does not exist, it creates the feature branch while preserving your work.
+- If switching branches would be unsafe, it refuses.
+
+### 6. Selected files only
+
+It only runs:
+
+```bash
+git add -- selected-file
+```
+
+for the files you chose in the UI.
+
+### 7. Large files use Git LFS
+
+Files larger than the threshold are tracked with Git LFS:
+
+```bash
+git lfs track path/to/file
+```
+
+and `.gitattributes` is included automatically.
+
+## Recommended usage
+
+1. Run the app.
+2. Choose repo folder, for example:
+
+```text
+D:\EEG
+```
+
+3. Click:
+
+```text
+Validate
+```
+
+4. Click:
+
+```text
+1. Safely update dev
+```
+
+5. Enter branch name, for example:
+
+```text
+features/eeg-loader
+```
+
+6. Click:
+
+```text
+2. Create/switch feature branch
+```
+
+7. Click:
+
+```text
+3. Open VS Code
+```
+
+8. Edit your files.
+9. Go back to the app and click:
+
+```text
+4. Refresh changed files
+```
+
+10. Select files to commit.
+11. Enter commit message.
+12. Click:
+
+```text
+5. Commit + push + review
+```
+
+## Build to EXE
+
+Put `git_workflow_gui.py` inside your repo or another folder, then run:
 
 ```powershell
-pip install pyinstaller
+cd /d D:\EEG
 pyinstaller --onefile --windowed --name GitWorkflowGUI git_workflow_gui.py
 ```
 
-Your `.exe` will be created here:
-
-```text
-dist/GitWorkflowGUI.exe
-```
-
-You can copy that `.exe` anywhere, but the target machine still needs Git installed and authenticated for GitHub.
-
-## Recommended first-time setup
-
-Before using the app, confirm these commands work manually in your repository:
+If you put it in a subfolder:
 
 ```powershell
-git status
-git checkout dev
-git pull origin dev
-git lfs version
-code .
+cd /d D:\EEG
+pyinstaller --onefile --windowed --name GitWorkflowGUI github-automation\git_workflow_gui.py
 ```
 
-If `git lfs version` fails, install Git LFS and run:
-
-```powershell
-git lfs install
-```
-
-If `code .` fails, open VS Code, press `Ctrl+Shift+P`, and search for:
+The output will be:
 
 ```text
-Shell Command: Install 'code' command in PATH
+D:\EEG\dist\GitWorkflowGUI.exe
 ```
 
-On Windows, you may instead need to reinstall VS Code and enable **Add to PATH**.
+## Important
 
-## How to use
-
-1. Run `GitWorkflowGUI.exe` or run the script directly:
-
-   ```powershell
-   python git_workflow_gui.py
-   ```
-
-2. Browse to your repository folder. For your example, it sounds like the repo may be at `D:\` or a folder under `D:\`.
-3. Click **Validate**.
-4. Click **1. Get up-to-date dev**.
-5. Click **2. Open VS Code**.
-6. Make your edits.
-7. Return to the app and click **3. Refresh changed files**.
-8. Click rows to select/deselect files.
-9. Enter a feature branch name, for example:
-
-   ```text
-   features/eeg-signal-loader
-   ```
-
-10. Enter a commit message.
-11. Click **4. Commit + push + open review link**.
-
-## Notes for your branch structure
-
-Your `dev` branch can contain the full working structure:
+Do not copy the Python script from rendered Markdown/chat text if it contains things like:
 
 ```text
-D:.
-|   eeg script
-|   learningmaterial.md
-|   pointer for trained model
-|   readme.md
-|   roadmap.md
-|
-+---devlog-anson
-+---devlog-brian
-+---EEG_signals
-\---pygame
+from **future** import annotations
+[p.is](http://p.is)_file()
+git_workflow_[gui.py](http://gui.py)
 ```
 
-You said `main` should only have:
+That means the code was corrupted by Markdown formatting.
+
+Use the actual file:
 
 ```text
-EEG_signals/
-pygame/library scripts
-eeg script
-readme.md
-roadmap.md
+git_workflow_gui.py
 ```
-
-This app uses `dev` as the base branch and opens review links comparing your feature branch back to `dev`. It does **not** automatically clean or restrict the `main` branch. If you want, I can also add a separate **Prepare main release** button that copies/merges only those allowed paths into `main`.
-
-## Large files and pointers
-
-The app uses Git LFS for selected files larger than the threshold shown in the UI. It runs commands similar to:
-
-```powershell
-git lfs install
-git lfs track path/to/large-file
-git add .gitattributes
-git add path/to/large-file
-```
-
-Git LFS stores a small pointer in Git and uploads the actual large file to LFS storage.
-
-## Safety behavior
-
-- The app only stages files you selected.
-- It refuses to commit if no files are staged.
-- It prevents using `main`, `master`, or `dev` as the feature branch name.
-- If the feature branch already exists locally, it checks it out and merges the latest `dev` into it.
