@@ -2,6 +2,7 @@ import pygame
 import os
 #import constants for easier access to key events
 from pygame.locals import *
+from Button import Button
 
 """
 sprite: 2d obj displayed on screen
@@ -17,49 +18,7 @@ class Sq(pygame.sprite.Sprite):
         #color of square (R,G,B)
         self.surf.fill((0,200,255))
 
-
-class Button(pygame.sprite.Sprite):
-    def __init__(self, size, position,icon):
-        super().__init__()
-
-        self.size = size
-
-        path = os.path.join(current_dir, 'assets', icon)
-        #size
-        self.surf = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
-        pygame.draw.circle(self.surf, (255,255,255), center=(size, size), radius=size)
-
-        self.img = pygame.image \
-                            .load(path) \
-                            .convert_alpha()
-        self.img = pygame.transform.scale(self.img, (size*1.5,size*1.5))
-        
-        #define where button is placed on main screen
-        self.rect = self.surf.get_rect(center=position)
-        #calculate where to place icon
-        self.img_rect = self.img.get_rect(center=self.rect.center)
-
-    def update_layout(self, size, position):
-        #surface basically a block to draw on
-        self.surf = pygame.Surface((size*2,size*2), pygame.SRCALPHA)
-        #draw white circle within block
-        pygame.draw.circle(self.surf, (255,255,255), center=(size, size), radius=size)
-        
-        #make sure image at center of circle
-        ##scale image to fit within block
-        self.img = pygame.transform.scale(self.img, (size*1.5,size*1.5))
-        ##get center of rectangle
-        self.rect = self.surf.get_rect(center=position)
-        ##get center of image
-        self.img_rect = self.img.get_rect(center=self.rect.center)
-
-    def draw(self, surface):
-        #draw white circle onto surface
-        surface.blit(self.surf, self.rect)
-        #draw icon onto surface
-        surface.blit(self.img, self.img_rect)
-
-
+##game
 pygame.init()
 win = pygame.display.set_mode((800,600), pygame.RESIZABLE) #game window 800x600
 width, height = win.get_size()
@@ -70,10 +29,10 @@ spacing = (size*2) + margin
 
 center_x = width/2
 
-
-rock = Button(size, (center_x - spacing, height*0.9), "hand-fist-solid.png")
-paper = Button(size, (center_x, height*0.9), "hand-solid.png")
-scissors = Button(size, (center_x + spacing, height*0.9), "hand-peace-solid.png")
+path = os.path.join(current_dir, 'assets')
+rock = Button(size, (center_x - spacing, height*0.9), os.path.join(path, "hand-fist-solid.png"))
+paper = Button(size, (center_x, height*0.9), os.path.join(path, "hand-solid.png"))
+scissors = Button(size, (center_x + spacing, height*0.9), os.path.join(path, "hand-peace-solid.png"))
 
 buttons = [rock, paper, scissors]
 
