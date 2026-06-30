@@ -1,3 +1,9 @@
+"""
+Author: Anson Li
+Created on: 26/6/2026
+Purpose: test script
+"""
+
 import pygame
 import os
 #import constants for easier access to key events
@@ -28,36 +34,59 @@ margin = int(width*0.0125)
 spacing = (size*2) + margin
 
 center_x = width/2
+center_y = (height-size)*0.95
 
 path = os.path.join(current_dir, 'assets')
-rock = Button(size, (center_x - spacing, height*0.9), os.path.join(path, "hand-fist-solid.png"))
-paper = Button(size, (center_x, height*0.9), os.path.join(path, "hand-solid.png"))
-scissors = Button(size, (center_x + spacing, height*0.9), os.path.join(path, "hand-peace-solid.png"))
+rock = Button(size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
+paper = Button(size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
+scissors = Button(size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))
 
 buttons = [rock, paper, scissors]
-
+cursor = ""
 #game loop
 run = True
+
+"""
+for but in buttons:
+    print(but.rect)
+    eg Rect(270,487,80,90)
+    left,top,width,height
+    so 
+    left bound = 270
+    right bound = 350
+    top bound = 487
+    bottom bound = 487+90
+"""
+    
 while run:
     for e in pygame.event.get():
         if e.type == QUIT or (e.type == KEYDOWN and e.key == K_BACKSPACE):
             run = False
         elif e.type == VIDEORESIZE:
-            width, height = e.size
-            size = int(width*0.05)
+            #get window size
+            width, height = e.size#ie 800*600,height*0.9=540
+            #adjust button size
+            size = int(width*0.05)#40 for 800 width
             margin = int(width*0.0125)
             spacing = (size*2) + margin
             center_x = width/2
+            center_y = (height-size)*0.95
 
             win = pygame.display.set_mode((width,height), pygame.RESIZABLE)
-            rock.update_layout(size, (center_x - spacing, height*0.9))
-            paper.update_layout(size, (center_x, height*0.9))
-            scissors.update_layout(size, (center_x + spacing, height*0.9))
+            rock.update_layout(size, (center_x - spacing, center_y))
+            paper.update_layout(size, (center_x, center_y))
+            scissors.update_layout(size, (center_x + spacing, center_y))
 
-        win.fill((50,50,50))
-        
-        for button in buttons:
-            button.draw(win)
+        elif e.type == pygame.MOUSEBUTTONDOWN:
+            mouse_pressed = pygame.mouse.get_pressed()
+            #0 left 1 middle 2 right
+            if mouse_pressed[0]:
+                cursor = pygame.mouse.get_pos()
+                
 
-        #update full display surface to screen
-        pygame.display.flip()
+    win.fill((50,50,50))
+
+    for button in buttons:
+        button.draw(win)
+    #update full display surface to screen
+    pygame.display.flip()

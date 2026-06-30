@@ -1,56 +1,72 @@
+"""
+Author: Anson Li
+Created on: 30/6/2026
+Purpose: Library for pygame buttons
+"""
 import pygame
+
+
 class Button(pygame.sprite.Sprite):
-    def __init__(self, size, position,icon, background_color=(128,128,128), icon_color=(255,255,255)):
+    def __init__(self, size, position, icon, background_color=(128, 128, 128), icon_color=(255, 255, 255), is_3d=True):
         super().__init__()
 
-        #button size
+        # button size
         self.size = size
+        self.is_3d = is_3d
         self.icon_color = icon_color
         self.background_color = background_color
-        self.offset = self.size//8
+        self.offset = 0 if is_3d else size//8
         self.position = position
-
         self.img = pygame.image.load(icon).convert_alpha()
 
         self.update_layout(self.size, self.position)
-        """
-        #surface size
-        self.surf = pygame.Surface((size*2.5, size*2+self.offset), pygame.SRCALPHA)
-
-        pygame.draw.circle(self.surf, color=background_color, center=(size,size+self.offset), radius=size)
-        pygame.draw.circle(self.surf, color=self.icon_color, center=(size, size), radius=size)
-        
-        self.img = pygame.image \
-                            .load(icon) \
-                            .convert_alpha()
-        self.img = pygame.transform.scale(self.img, (size*1.5,size*1.5))
-        
-        #define where button is placed on main screen
-        self.rect = self.surf.get_rect(center=position)
-        #calculate where to place icon
-        self.img_rect = self.img.get_rect(center=self.rect.center)"""
 
     def update_layout(self, size, position):
-        self.size = size
         self.position = position
-        self.offset = self.size//8
+        
+        
+        """
+            size = width*0.05
+            so when increase width only, height will overflow
+            solution center_h should be adjust with radius:
+            center_h = (height-radius)*0.95
+        """
 
-        #surface basically a block to draw on
-        self.surf = pygame.Surface((size*2,size*2+self.offset), pygame.SRCALPHA)
-        #draw white circle within block
-        pygame.draw.circle(self.surf, color=self.background_color, center=(size,size+self.offset), radius=size)
+        # surface basically a block to draw on
+        self.surf = pygame.Surface((size*2, (size+self.offset)*2), pygame.SRCALPHA)
+        # draw white circle within block
+        if self.is_3d:
+            self.offset = size//8
+            pygame.draw.circle(self.surf, color=self.background_color, center=(size, size+self.offset), radius=size)
         pygame.draw.circle(self.surf, color=self.icon_color, center=(size, size), radius=size)
 
-        #make sure image at center of circle
-        ##scale image to fit within block
-        scaled_icon = pygame.transform.scale(self.img, (size*1.5,size*1.5))
-        ##center it onto main circle
-        icon_rect = scaled_icon.get_rect(center=(self.size, self.size))
-        ##draw icon onto button surface directly
+        self.size = size
+
+        # make sure image at center of circle
+        # scale image to fit within block
+        scaled_icon = pygame.transform.scale(self.img, (size*1.5, size*1.5))
+        # center it onto main circle
+        icon_rect = scaled_icon.get_rect(center=(size, size))
+        # draw icon onto button surface directly
         self.surf.blit(scaled_icon, icon_rect)
-        #define where button sits on main screen
+        # define where button sits on main screen
         self.rect = self.surf.get_rect(center=position)
 
     def draw(self, surface):
-        #draw white circle onto surface
+        # draw white circle onto surface
         surface.blit(self.surf, self.rect)
+
+    def get_bound(self):
+        #return tuple of surface boundary
+        """
+        eg Rect(270,487,80,90)
+        return (left,right,top,bottom)
+        """
+        return (self.rect[0],self.rect[0]+self.rect[2],self.rect[1],self.rect[1]+self.rect[3])
+    
+    def check_within(self, pos):
+        #pos (int x,int y)
+        bound = self.get_bound()
+        if bound[0]<=pos[0]<=bound[1] and bound[2]<=pos[2]<=bound[3]:
+            return True
+        return False
