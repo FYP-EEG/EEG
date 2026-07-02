@@ -1,0 +1,6 @@
+- [ ] Button class that takes in position, size, logo, function for triggering
+- [ ] Testing script for pygame-ce
+- [ ] EEG data collection
+- [ ] EEG data conversion?
+- [ ] LLM training
+- [ ] LLM classification
