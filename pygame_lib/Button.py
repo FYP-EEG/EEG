@@ -15,7 +15,7 @@ class Button(pygame.sprite.Sprite):
         self.is_3d = is_3d
         self.icon_color = icon_color
         self.background_color = background_color
-        self.offset = 0 if is_3d else size//8
+        self.offset = 0 if not is_3d else size//8
         self.position = position
         self.img = pygame.image.load(icon).convert_alpha()
 
