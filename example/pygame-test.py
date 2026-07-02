@@ -8,6 +8,16 @@ import pygame
 import os
 #import constants for easier access to key events
 from pygame.locals import *
+
+import sys
+from pathlib import Path
+# 1. Get the directory of 'pygame-test.py' (D:\EEG\example)
+script_dir = Path(__file__).resolve().parent
+# 2. Go up one level to 'D:\EEG' and down into 'pygame_lib'
+lib_path = script_dir.parent / "pygame_lib"
+# 3. Add it to sys.path
+sys.path.insert(0, str(lib_path))
+# 4. Import the module
 from Button import Button
 
 """
@@ -36,7 +46,7 @@ spacing = (size*2) + margin
 center_x = width/2
 center_y = (height-size)*0.95
 
-path = os.path.join(current_dir, 'assets')
+path = "assets/"#os.path.join(current_dir, 'assets')
 rock = Button(size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
 paper = Button(size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
 scissors = Button(size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))
