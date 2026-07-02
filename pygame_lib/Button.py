@@ -7,10 +7,10 @@ import pygame
 
 
 class Button(pygame.sprite.Sprite):
-    def __init__(self, size, position, icon, background_color=(128, 128, 128), icon_color=(255, 255, 255), is_3d=True):
+    def __init__(self,name, size, position, icon, func=None, background_color=(128, 128, 128), icon_color=(255, 255, 255), is_3d=True):
         super().__init__()
 
-        # button size
+        self.name = name
         self.size = size
         self.is_3d = is_3d
         self.icon_color = icon_color
@@ -18,13 +18,12 @@ class Button(pygame.sprite.Sprite):
         self.offset = 0 if not is_3d else size//8
         self.position = position
         self.img = pygame.image.load(icon).convert_alpha()
+        self.func = func
 
         self.update_layout(self.size, self.position)
 
     def update_layout(self, size, position):
         self.position = position
-        
-        
         """
             size = width*0.05
             so when increase width only, height will overflow
@@ -67,6 +66,19 @@ class Button(pygame.sprite.Sprite):
     def check_within(self, pos):
         #pos (int x,int y)
         bound = self.get_bound()
-        if bound[0]<=pos[0]<=bound[1] and bound[2]<=pos[2]<=bound[3]:
+        if bound[0]<=pos[0]<=bound[1] and bound[2]<=pos[1]<=bound[3]:
             return True
         return False
+
+    def click(self):
+        if(self.func):
+            self.func()
+        else:
+            self.sample_func(surface=pygame.display.get_surface())
+
+    def sample_func(self,surface):
+        width, height = pygame.display.get_window_size()
+        surface.fill((50,50,50))
+        overlay_img = self.img
+        img_rect = overlay_img.get_rect(center=(width // 2, height // 2))
+        surface.blit(overlay_img, img_rect)

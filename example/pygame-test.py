@@ -47,15 +47,16 @@ center_x = width/2
 center_y = (height-size)*0.95
 
 path = "assets/"#os.path.join(current_dir, 'assets')
-rock = Button(size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
-paper = Button(size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
-scissors = Button(size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))
+rock = Button("rock", size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
+paper = Button("paper", size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
+scissors = Button("scissors", size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))
 
 buttons = [rock, paper, scissors]
 cursor = ""
+cursorUpdate = False
+
 #game loop
 run = True
-
 """
 for but in buttons:
     print(but.rect)
@@ -67,7 +68,7 @@ for but in buttons:
     top bound = 487
     bottom bound = 487+90
 """
-    
+win.fill((50,50,50))
 while run:
     for e in pygame.event.get():
         if e.type == QUIT or (e.type == KEYDOWN and e.key == K_BACKSPACE):
@@ -92,10 +93,18 @@ while run:
             #0 left 1 middle 2 right
             if mouse_pressed[0]:
                 cursor = pygame.mouse.get_pos()
-                
+                cursorUpdate = True
 
-    win.fill((50,50,50))
-
+    if cursorUpdate and rock.check_within(cursor):
+        rock.click()
+        cursorUpdate = False
+    elif cursorUpdate and paper.check_within(cursor):
+        paper.click()
+        cursorUpdate = False
+    elif cursorUpdate and scissors.check_within(cursor):
+        scissors.click()
+        cursorUpdate = False
+    
     for button in buttons:
         button.draw(win)
     #update full display surface to screen
