@@ -7,9 +7,10 @@ import pygame
 
 
 class Button(pygame.sprite.Sprite):
-    def __init__(self,name, size, position, icon, func=None, background_color=(128, 128, 128), icon_color=(255, 255, 255), is_3d=True):
+    def __init__(self, id, name, size, position, icon, func=None, background_color=(128, 128, 128), icon_color=(255, 255, 255), is_3d=True):
         super().__init__()
 
+        self.id = id
         self.name = name
         self.size = size
         self.is_3d = is_3d
