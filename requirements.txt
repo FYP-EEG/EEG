@@ -1,3 +1,4 @@
 Python 3.14
 Pygame-ce 2.5.7
 brainflow 5.22.2
+pylsl 1.18.2

@@ -4,9 +4,15 @@ import time
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from pylsl import StreamInfo, StreamOutlet
 #py data_receive.py --board-id -2 --ip-address 225.1.1.1 --ip-port 6677 --master-board -1
 
+board = None
+args = None
+outlet = None
+
 def config():
+    global board, args
     BoardShim.enable_dev_board_logger()
 
     parser = argparse.ArgumentParser()
@@ -42,11 +48,10 @@ def config():
     parser.add_argument('--master-board', type=int, help='master board id for streaming and playback boards',
                         required=False, default=BoardIds.SYNTHETIC_BOARD.value)
     args = parser.parse_args()
-    board = putParams(args)
-
-    return board, args
+    putParams(args)
 
 def putParams(args):
+    global board
     params = BrainFlowInputParams()
     params.ip_port = args.ip_port
     params.serial_port = args.serial_port
@@ -60,12 +65,29 @@ def putParams(args):
     params.master_board = args.master_board
 
     board = BoardShim(args.board_id, params)
-    return board
 
-def main():
-    board, args = config()
+def start():
+    global board, outlet
+    config()
     board.prepare_session()
     board.start_stream()
+    info = StreamInfo("StringMarkers", "Markers", 1, 0, "string", "uid")
+    outlet = StreamOutlet(info)
+
+def end():
+    global board
+    board.stop_stream()
+    board.release_session()
+
+def put_marker(word):
+    global board, outlet
+    if len(word) == 1:
+        board.insert_marker(float(ord(word)))
+    else:
+        outlet.push_sample([word])
+
+def plot_data():
+    global board
     #index of eeg channels
     eeg_chann = BoardShim.get_eeg_channels(args.master_board)[:8]
     print(eeg_chann)
@@ -101,8 +123,8 @@ def main():
 
     ani = FuncAnimation(fig, update, interval=60, blit=False, cache_frame_data=False)#update every 50ms
     plt.show()
-    board.stop_stream()
-    board.release_session()
 
 if __name__ == "__main__":
-    main()
+    start()
+    plot_data()
+    end()

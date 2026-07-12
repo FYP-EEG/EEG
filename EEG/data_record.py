@@ -9,6 +9,7 @@ import pygame
 from pygame.locals import *
 import random
 import string
+import data_receive as BCI
 
 #init fields
 ##game
@@ -41,6 +42,8 @@ arr = random.choices(string.ascii_letters + string.digits, k=length)
 run = True
 win.fill((0,0,0))
 
+BCI.start()
+
 #for logging, start_time set only when end
 #phase = start/end
 #type = buffer/cycle
@@ -56,6 +59,7 @@ if arr:
     allow_input = False
     # send start marker of show
     show = arr.pop(0)
+    BCI.put_marker(show)
     count += 1
     show_text = True
 
@@ -67,6 +71,7 @@ while run:
     current_time = pygame.time.get_ticks()
     for e in pygame.event.get():
         if e.type == QUIT or (e.type == KEYDOWN and e.key == K_ESCAPE):
+            BCI.end()
             run = False
         elif e.type == KEYDOWN and not arr:
             #if key pressed is not enter, key is alphanumeric, input is allowed and arr is empty
@@ -79,6 +84,7 @@ while run:
             elif e.key == (K_RETURN or K_KP_ENTER) and show and allow_input:
                 print()
                 #send start marker of show
+                BCI.put_marker(show)
                 allow_input = False
                 count += 1
                 show_text = True
@@ -88,11 +94,13 @@ while run:
                 display_time = current_time + show_time*1000
 
     if length != 0 and not arr:
+        BCI.end()
         run = False
 
     #showing text but passed display_time(2s)            
     if show_text and current_time >= display_time:
         #send end marker of show
+        BCI.put_marker(show)
         print(show)
         log("end", "cycle",current_time=current_time, count=count, start_time=cycle_start)
         show_text = False
@@ -107,6 +115,7 @@ while run:
         log("end", "buffer", current_time=current_time, count=count, start_time=buffer_start)
         if arr:
             show = arr.pop(0)
+            BCI.put_marker(show)
             count += 1
             show_text = True
             cycle_start = current_time
