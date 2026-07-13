@@ -1,7 +1,7 @@
 """
 Author: Anson Li
 Created on: 26/6/2026
-Purpose: test script
+Purpose: test script for pygame
 """
 
 import pygame
@@ -47,9 +47,9 @@ center_x = width/2
 center_y = (height-size)*0.95
 
 path = "assets/"#os.path.join(current_dir, 'assets')
-rock = Button("rock", size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
-paper = Button("paper", size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
-scissors = Button("scissors", size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))
+rock = Button(0, "rock", size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
+paper = Button(1, "paper", size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
+scissors = Button(2, "scissors", size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))
 
 buttons = [rock, paper, scissors]
 cursor = ""
