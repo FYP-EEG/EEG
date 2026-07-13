@@ -4,7 +4,7 @@ Created on: 30/6/2026
 Purpose: Library for pygame buttons
 """
 import pygame
-
+import math
 
 class Button(pygame.sprite.Sprite):
     def __init__(self, id, name, size, position, icon, func=None, background_color=(128, 128, 128), icon_color=(255, 255, 255), is_3d=True):
@@ -65,11 +65,13 @@ class Button(pygame.sprite.Sprite):
         return (self.rect[0],self.rect[0]+self.rect[2],self.rect[1],self.rect[1]+self.rect[3])
     
     def check_within(self, pos):
-        #pos (int x,int y)
-        bound = self.get_bound()
-        if bound[0]<=pos[0]<=bound[1] and bound[2]<=pos[1]<=bound[3]:
-            return True
-        return False
+        #cicrle area check
+        center_x = self.rect.left + self.size
+        center_y = self.rect.top + self.size
+
+        distance = math.hypot(pos[0] - center_x, pos[1] - center_y)
+
+        return distance <= self.size
 
     def click(self):
         if(self.func):
