@@ -9,15 +9,22 @@ import argparse
 import datetime as dt
 from pathlib import Path
 
+import cleaning as cl
+
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+
+import numpy as np
+
 from pylsl import StreamInfo, StreamOutlet
 #py data_receive.py --board-id -2 --ip-address 225.1.1.1 --ip-port 6677 --master-board -1
 
 board = None
 args = None
 outlet = None
+domain = "t"
 
 def config(BID=-2, port=4):
     """
@@ -61,6 +68,7 @@ def config(BID=-2, port=4):
     parser.add_argument('--master-board', type=int, help='master board id for streaming and playback boards',
                         required=False, default=BoardIds.SYNTHETIC_BOARD.value)
     args = parser.parse_args()
+    args.sampling_rate=250
     putParams(args)
 
 def putParams(args):
@@ -139,45 +147,78 @@ def get_BID():
     return args.board_id
 
 def plot_data():
+    #plot frequency domain
     global board, args
     #index of eeg channels
     eeg_chann = BoardShim.get_eeg_channels(get_BID())[:8]
     print(eeg_chann)
 
-    fig, axes = plt.subplots(4,2)
+    fig, axes = plt.subplots(4, 2, figsize=(10, 8))
     axes_flat = axes.flatten() # Make it easy to iterate
         
     # Pre-create line objects for better performance
     lines = []
     for i in range(len(eeg_chann)):
         line, = axes_flat[i].plot([], [], lw=1)
-        axes_flat[i].set_title(f'CH {i+1}', fontsize=8)
-        axes_flat[i].grid(True, alpha=0.3)
-        # Set a default Y-axis limit for EEG (typically +/- 100-500 uV)
-        axes_flat[i].set_ylim(-200, 200) 
+        if(domain=="f"):
+            axes_flat[i].set_title(f'CH {i+1} (FFT)', fontsize=9)
+            axes_flat[i].set_xlabel('Frequency (Hz)', fontsize=8)
+            axes_flat[i].set_ylabel('Magnitude', fontsize=8)
+            axes_flat[i].grid(True, alpha=0.3)
+            axes_flat[i].set_xlim(0, 50) # Frequency range 0-50 Hz
+            axes_flat[i].set_ylim(0, 200) # Initial Y-axis limit for FFT magnitude
+        else:
+            axes_flat[i].set_title(f'CH {i+1}', fontsize=8)
+            axes_flat[i].grid(True, alpha=0.3)
+            # Set a default Y-axis limit for EEG (typically +/- 100-500 uV)
+            axes_flat[i].set_ylim(-200, 200) 
         lines.append(line)
 
     plt.tight_layout()
 
     def update(frame):
         # Get last 1000 samples (4 seconds at 250Hz)
-        data = board.get_current_board_data(1000)
+        data = cl.clean(board.get_current_board_data(1000), eeg_chann, args.sampling_rate)
             
         if data.size > 0:
+            N = len(data)
             for i, channel_idx in enumerate(eeg_chann):
-                # Update the Y-data for each line
-                lines[i].set_data(range(data.shape[1]), data[channel_idx])
+                if(domain=="f"):
+                    y = data[channel_idx].values
+                    # Compute Real Fast Fourier Transform (RFFT)
+                    fft_vals = np.abs(np.fft.rfft(y))
+                    freqs = np.fft.rfftfreq(len(y), 1 / args.sampling_rate)
                     
-                # Optional: Auto-scale X-axis to match the data length
-                axes_flat[i].set_xlim(0, data.shape[1])
+                    # Convert raw FFT magnitudes to Peak Amplitude in uV
+                    fft_uV_peak = fft_vals * (2.0 / N)
+                    fft_uV_peak[0] = fft_vals[0] / N
+                    if len(y) % 2 == 0:
+                        fft_uV_peak[-1] = fft_vals[-1] / len(y)
+                    fft_uV_rms = fft_uV_peak / np.sqrt(2.0)
+                    # Update line data for FFT plot in uV
+                    lines[i].set_data(freqs, fft_uV_rms)
+                    
+                    # Auto-scale Y-axis in uV (typical EEG peaks are 5 - 30 uV)
+                    max_val = np.max(fft_uV_rms) if len(fft_uV_rms) > 0 else 20
+                    axes_flat[i].set_ylim(0, max(20, max_val * 1.1))
+                    axes_flat[i].set_ylabel('Amplitude (uV)', fontsize=8)
+                else:
+                    # Update the Y-data for each line
+                    lines[i].set_data(range(data.shape[0]), data[channel_idx])
+                        
+                    # Optional: Auto-scale X-axis to match the data length
+                    axes_flat[i].set_xlim(0, data.shape[0])
 
             return lines
 
-    ani = FuncAnimation(fig, update, interval=60, blit=False, cache_frame_data=False)#update every 50ms
+    ani = FuncAnimation(fig, update, interval=60, blit=False, cache_frame_data=False)
     plt.show()
 
 if __name__ == "__main__":
     #print(os.path.dirname(__file__))
     start()
-    plot_data()
+    try:
+        plot_data()
+    except KeyboardInterrupt:
+        pass
     end()
