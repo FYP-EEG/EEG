@@ -46,7 +46,7 @@ spacing = (size*2) + margin
 center_x = width/2
 center_y = (height-size)*0.95
 
-path = "assets/"#os.path.join(current_dir, 'assets')
+path = "assets/" #os.path.join(current_dir, 'assets')
 rock = Button(0, "rock", size, (center_x - spacing, center_y), os.path.join(path, "hand-fist-solid.png"))
 paper = Button(1, "paper", size, (center_x, center_y), os.path.join(path, "hand-solid.png"))
 scissors = Button(2, "scissors", size, (center_x + spacing, center_y), os.path.join(path, "hand-peace-solid.png"))

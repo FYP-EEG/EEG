@@ -1,0 +1,8 @@
+Pygame-ce
+brainflow
+pylsl
+scikit-learn
+numpy
+scipy
+matplotlib
+mne

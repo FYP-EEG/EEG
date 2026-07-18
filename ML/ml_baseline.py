@@ -1,3 +1,10 @@
+"""
+Author: Brian
+Created on: 13/7/2026
+Purpose: machine learning baseline
+Ideology: generate fake random data
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.pipeline import Pipeline
@@ -13,12 +20,13 @@ print("Initating sim 8 channel data...")
 
 # expirment data set
 n_trials = 100       # total rounds: 50 left hand, 50 right hand
-n_channels = 8       # number of channel
-sfreq = 250          # Cyton 
+n_channels = 8       # number of channel of headset
+sample_freq = 250          # Cyton 
 trial_duration = 3   # duration for movement imagination
-n_times = sfreq * trial_duration 
+n_times = sample_freq * trial_duration 
 
 # random 3D matrix, MNE standard：(Trials, Channels, Time_points)
+#eg (100, 8, 750)
 X = np.random.randn(n_trials, n_channels, n_times)
 y = np.array([0, 1] * (n_trials // 2)) # 0 left hand, 1 right hand
 
@@ -64,6 +72,7 @@ print("="*40)
 print(classification_report(y_test, y_pred, target_names=['Left Hand', 'Right Hand']))
 
 print("=== Confusion Matrix ===")
+#matrix to show correct guess and wrong guess
 cm = confusion_matrix(y_test, y_pred)
 print(cm)
 

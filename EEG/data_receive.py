@@ -1,5 +1,13 @@
+"""
+Author: Anson Li
+Created on: 12/6/2026
+Purpose: script to receive data from headset
+Location: project_dir/EEG/data_receive.py
+"""
+
 import argparse
-import time
+import datetime as dt
+from pathlib import Path
 
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 import matplotlib.pyplot as plt
@@ -11,7 +19,12 @@ board = None
 args = None
 outlet = None
 
-def config():
+def config(BID=-2, port=4):
+    """
+    Edit by Anson
+    Date: 18/7/2026
+    Changes: added parameters for board id and port for data_record
+    """
     global board, args
     BoardShim.enable_dev_board_logger()
 
@@ -25,7 +38,7 @@ def config():
                         default=0)
     #for cyton usb, keep this for wired headset + cyton
     #windows com3/com4...
-    parser.add_argument('--serial-port', type=str, help='serial port', required=False, default='')
+    parser.add_argument('--serial-port', type=str, help='serial port', required=False, default=f"COM{port}")
     #bluetooth for ganglion
     parser.add_argument('--mac-address', type=str, help='mac address', required=False, default='')
     parser.add_argument('--other-info', type=str, help='other info', required=False, default='')
@@ -41,7 +54,7 @@ def config():
         0 for cyton 8 chann
     """
     parser.add_argument('--board-id', type=int, help='board id, check docs to get a list of supported boards',
-                        required=False, default=BoardIds.STREAMING_BOARD.value)
+                        required=False, default=BID)
     """
         -1 synthetic: 8channels, 250Hz
     """
@@ -66,30 +79,69 @@ def putParams(args):
 
     board = BoardShim(args.board_id, params)
 
-def start():
+def check_dir():
+    """
+    Add by Anson
+    Date: 18/7/2026
+    Changes: create daily csv for recording, create dataset/ if not exist
+    """
+    #project_dir/EEG/data_receive.py -> project_dir
+    proj_dir = Path(__file__).resolve().parents[1]
+    dataset_dir = proj_dir / "dataset"
+    #create if not exist
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = dataset_dir / f"{dt.date.today()}.csv" 
+    return csv_path.as_posix()
+
+def start(BID=-2, port=4):
+    """
+    Edit by Anson
+    Date: 18/7/2026
+    Changes: added parameters for board id and port for data_record, allow csv output
+    """
     global board, outlet
-    config()
+    config(BID, port)
     board.prepare_session()
-    board.start_stream()
     info = StreamInfo("StringMarkers", "Markers", 1, 0, "string", "uid")
     outlet = StreamOutlet(info)
+    #put into project_dir/dataset/XXXX.csv
+    board.start_stream(45000, f"file://{check_dir()}:a")
 
 def end():
     global board
-    board.stop_stream()
-    board.release_session()
+    if board is not None and board.is_prepared():
+        board.stop_stream()
+        board.release_session()
 
-def put_marker(word):
+def put_marker(word, phase="start"):
+    """
+    Edit by Anson
+    Date: 18/7/2026
+    Changes: to mark phase of marker, if end then +1000
+    """
     global board, outlet
     if len(word) == 1:
-        board.insert_marker(float(ord(word)))
+        value = float(ord(word))
+        if phase == "end":
+            value += 1000
+        board.insert_marker(value)
     else:
-        outlet.push_sample([word])
+        outlet.push_sample([f"{phase}:{word}"])
+
+def get_BID():
+    """
+    Add by Anson
+    Date: 18/7/2026
+    Changes: for virtual board and real board distinction
+    """
+    if args.board_id == BoardIds.STREAMING_BOARD.value:
+        return args.master_board
+    return args.board_id
 
 def plot_data():
-    global board
+    global board, args
     #index of eeg channels
-    eeg_chann = BoardShim.get_eeg_channels(args.master_board)[:8]
+    eeg_chann = BoardShim.get_eeg_channels(get_BID())[:8]
     print(eeg_chann)
 
     fig, axes = plt.subplots(4,2)
@@ -125,6 +177,7 @@ def plot_data():
     plt.show()
 
 if __name__ == "__main__":
+    #print(os.path.dirname(__file__))
     start()
     plot_data()
     end()

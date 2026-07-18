@@ -36,7 +36,7 @@ class Button(pygame.sprite.Sprite):
         self.surf = pygame.Surface((size*2, (size+self.offset)*2), pygame.SRCALPHA)
         # draw white circle within block
         if self.is_3d:
-            self.offset = size//8
+            self.offset = size//8 #grey circle for visual effect
             pygame.draw.circle(self.surf, color=self.background_color, center=(size, size+self.offset), radius=size)
         pygame.draw.circle(self.surf, color=self.icon_color, center=(size, size), radius=size)
 
@@ -65,10 +65,16 @@ class Button(pygame.sprite.Sprite):
         return (self.rect[0],self.rect[0]+self.rect[2],self.rect[1],self.rect[1]+self.rect[3])
     
     def check_within(self, pos):
+        """
+        Edited by Brian
+        date: 13/7/2026
+        Purpose: 
+        """
         #cicrle area check
         center_x = self.rect.left + self.size
         center_y = self.rect.top + self.size
 
+        #get distance between cursor and center of button by calculating hypotenuse
         distance = math.hypot(pos[0] - center_x, pos[1] - center_y)
 
         return distance <= self.size
