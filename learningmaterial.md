@@ -110,7 +110,7 @@ You need to understand:
 
 📄 Papers:
    - "A review of classification algorithms for EEG-based
-     brain–computer interfaces" (Lotte et al., 2007)
+     brain-computer interfaces" (Lotte et al., 2007)
      → Free on Google Scholar
 ```
 
