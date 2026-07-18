@@ -1,0 +1,8 @@
+Pygame-ce==2.5.7
+brainflow==5.22.2
+pylsl==1.18.2
+scikit-learn==1.9.0
+numpy==2.5.1
+scipy==1.18.0
+matplotlib==3.11.1
+mne==1.12.1
