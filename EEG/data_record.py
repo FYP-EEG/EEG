@@ -11,6 +11,7 @@ from pygame.locals import *
 import random
 import string
 import data_receive as BCI
+import matplotlib.pyplot as plt
 
 def main():
     #init fields
@@ -45,7 +46,10 @@ def main():
     win.fill((0,0,0))
 
     BCI.start(BID=-2,port=None)
-
+    #start live plot in non blocking mode
+    ani = BCI.plot_data(block=False)
+    
+    win.fill((0,0,0))
     #for logging, start_time set only when end
     #phase = start/end
     #type = buffer/cycle
@@ -76,6 +80,8 @@ def main():
 
         while run:
             current_time = pygame.time.get_ticks()
+            #send gui events so chart update without freezing
+            plt.pause(0.001)
             for e in pygame.event.get():
                 if e.type == QUIT or (e.type == KEYDOWN and e.key == K_ESCAPE):
                     run = False

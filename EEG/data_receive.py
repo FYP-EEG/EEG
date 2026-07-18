@@ -146,14 +146,14 @@ def get_BID():
         return args.master_board
     return args.board_id
 
-def plot_data():
+def plot_data(block=True):
     #plot frequency domain
     global board, args
     #index of eeg channels
     eeg_chann = BoardShim.get_eeg_channels(get_BID())[:8]
     print(eeg_chann)
 
-    fig, axes = plt.subplots(4, 2, figsize=(10, 8))
+    fig, axes = plt.subplots(4, 2, figsize=(400,400,"px"))
     axes_flat = axes.flatten() # Make it easy to iterate
         
     # Pre-create line objects for better performance
@@ -186,14 +186,21 @@ def plot_data():
                 if(domain=="f"):
                     y = data[channel_idx].values
                     # Compute Real Fast Fourier Transform (RFFT)
+                    ##rfft discard negative as EEG signals are real numbers, get 501 bins for N = 1000, 
+                    ##abs value of complex numbers, raw unnormalized sum of sine amplitudes
                     fft_vals = np.abs(np.fft.rfft(y))
+                    ##generate x axis freq array per time interval(1/250)
                     freqs = np.fft.rfftfreq(len(y), 1 / args.sampling_rate)
                     
                     # Convert raw FFT magnitudes to Peak Amplitude in uV
+                    ##get average amplitude by /N, *2 as rfft discarded negative
                     fft_uV_peak = fft_vals * (2.0 / N)
+                    ##index 0 = 0Hz(baseline voltage of chann)
                     fft_uV_peak[0] = fft_vals[0] / N
+                    #if N is even, last bin sit at 125Hz
                     if len(y) % 2 == 0:
                         fft_uV_peak[-1] = fft_vals[-1] / len(y)
+                    #get root mean square of voltage
                     fft_uV_rms = fft_uV_peak / np.sqrt(2.0)
                     # Update line data for FFT plot in uV
                     lines[i].set_data(freqs, fft_uV_rms)
@@ -212,7 +219,10 @@ def plot_data():
             return lines
 
     ani = FuncAnimation(fig, update, interval=60, blit=False, cache_frame_data=False)
-    plt.show()
+    #set blocking mechanism
+    plt.show(block=block)
+    # Return animation reference so it stays alive in non-blocking mode
+    return ani
 
 if __name__ == "__main__":
     #print(os.path.dirname(__file__))
