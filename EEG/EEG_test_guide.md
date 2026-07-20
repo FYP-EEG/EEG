@@ -12,14 +12,19 @@ Guide to run EEG simulation: record data with VEP, EEG signal receive from OpenB
     </li>
     <li>Click start data stream in top left green button</li>
     <li>Open vscode</li>
-    <li>Make virtual environment with <code>py -m venv .venv</code></li>
-    <li>Run <code>
+    <li>Make virtual environment with ```bash
+        py -m venv .venv
+        ```</li>
+    <li>Run ```bash
         .venv\Scripts\activate
-        <br>
         pip install -r requirements_loose.txt
-    </code></li>
-    <li>Run <code>py eeg/data_receive.py</code> for simple live plot and signal filtering</li>
-    <li>Run <code>py eeg/data_record.py</code> for flashing words/characters</li>
-    <li>type characters while focused on the pygame window, you can observe current word to display in cmd</li>
+    ```</li>
+    <li>Run ```bash
+        py eeg/data_receive.py
+        ``` for simple live plot and signal filtering</li>
+    <li>Run ```bash
+        py eeg/data_record.py
+        ``` for flashing words/characters</li>
+    <li>type characters while focused on the pygame window, you can observe current word to display in bash</li>
     <li>Then hit enter and word will appear for 2 seconds, and will have 1s buffer time and only then it allow input again</li>
 </ol>
