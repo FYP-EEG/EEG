@@ -45,7 +45,7 @@ def main():
     run = True
     win.fill((0,0,0))
 
-    BCI.start(BID=-2,port=None)
+    BCI.start(BID=-2,port=None, plot_domain="f")
     #start live plot in non blocking mode
     ani = BCI.plot_data(block=False)
     

@@ -101,14 +101,15 @@ def check_dir():
     csv_path = dataset_dir / f"{dt.date.today()}.csv" 
     return csv_path.as_posix()
 
-def start(BID=-2, port=4):
+def start(BID=-2, port=4, plot_domain="t"):
     """
     Edit by Anson
     Date: 18/7/2026
     Changes: added parameters for board id and port for data_record, allow csv output
     """
-    global board, outlet
+    global board, outlet, domain
     config(BID, port)
+    domain = plot_domain
     board.prepare_session()
     info = StreamInfo("StringMarkers", "Markers", 1, 0, "string", "uid")
     outlet = StreamOutlet(info)
@@ -120,6 +121,7 @@ def end():
     if board is not None and board.is_prepared():
         board.stop_stream()
         board.release_session()
+    board = None
 
 def put_marker(word, phase="start"):
     """
