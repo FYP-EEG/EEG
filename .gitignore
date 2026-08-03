@@ -6,3 +6,5 @@ dist/
 GitWorkflowGUI.exe
 temp/
 venv/
+dataset/
+EEG/test_udp.py
