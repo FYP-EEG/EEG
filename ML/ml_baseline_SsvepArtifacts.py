@@ -3,13 +3,15 @@ Author: Brian
 Created on: 20/7/2026
 Purpose: Hybrid SSVEP + Artifacts Pipeline Baseline
 Ideology: Test both CCA frequency matching and time-domain peak detection using simulated data
+Edited on: 
+1. 03/8/2026 (Adding Bandpass Filter)
 """
-
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.cross_decomposition import CCA
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from scipy.signal import butter, sosfiltfilt
 
 print("Initializing simulated 8-channel EEG Data")
 # experiment data set
@@ -43,6 +45,16 @@ for i in range(n_trials):
 print(f"Simulated Data Shape: {X.shape} (Trials, Channels, Time_points)")
 
 #2. Algorithm Components
+#fitering
+def create_bandpass_filter(lowcut=1.0, highcut=45.0, fs=250, order=4):
+    """butter SOS bandpass filter"""
+    return butter(order, [lowcut, highcut], btype='band', fs=fs, output='sos')
+
+def apply_filter(data, sos):
+    """2D EEG (Channels, Time_points) """
+    return sosfiltfilt(sos, data, axis=-1)
+
+
 #SSVEP Detection using Canonical Correlation Analysis (CCA)
 def cca_ssvep_detection(trial_data, target_freqs, sample_freq):
     eeg_segment = trial_data[[6,7], :].T
@@ -79,14 +91,16 @@ def artifact_detection(trial_data, threshold=100.0):
 #3. Hybird Decoing 
 print("\nRunning Hybrid Decoding Pipeline (Non-blocking Engine simulation)...")
 y_pred = []
+sos_filter = create_bandpass_filter(lowcut=1.0, highcut=45.0, fs=sample_freq)
 
 for i in range(n_trials):
-    trial_data = X[i, :, :]
-    
-    if artifact_detection(trial_data, threshold=100.0):
+    raw_trial_data = X[i, :, :]
+    filtered_trial_data = apply_filter(raw_trial_data, sos_filter)
+
+    if artifact_detection(filtered_trial_data, threshold=100.0):
         y_pred.append(2)
     else:
-        class_idx = cca_ssvep_detection(trial_data, target_frequencies, sample_freq)
+        class_idx = cca_ssvep_detection(filtered_trial_data, target_frequencies, sample_freq)
         y_pred.append(class_idx)
 
 y_pred = np.array(y_pred)
