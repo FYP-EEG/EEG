@@ -9,35 +9,39 @@ import scipy.io
 import os
 import mne
 
-#mi data uses edf files
-"""
-structure
-S001-S109
-S001R01.edf
-so
-SxxxRxx.edf
-for sxx in dataset folder:
-    for rxx in sxx:
-        print(sxxrxx.edf)
-"""
-def read_edf():
-    data_dir = os.path.join('dataset', 'mi', 'S001R01.edf')
-    data = mne.io.read_raw_edf(data_dir)
-    raw_data = data.get_data()
-    print(raw_data)
-    # you can get the metadata included in the file and a list of all channels:
-    info = data.info
-    channels = data.ch_names
 
-#ssvep uses mat
-"""
-structure
-sxx
-"""
-def read_mat():
-    data_dir = os.path.join('dataset', 'ssvep', 'S1.mat')
-    mat = scipy.io.loadmat(data_dir)
-    print(mat["data"])
+# Readers for example public datasets. These functions are safe to import; they
+# only perform file I/O when called explicitly.
+
+def read_edf(path=None):
+    """Read a single EDF file from the dataset/mi folder.
+
+    Returns the raw numpy array from the EDF file.
+    """
+    if path is None:
+        path = os.path.join('dataset', 'mi', 'S001R01.edf')
+    data = mne.io.read_raw_edf(path)
+    raw_data = data.get_data()
+    return raw_data
+
+
+def read_mat(path=None):
+    """Read a MATLAB .mat file from the dataset/ssvep folder.
+
+    Returns the loaded mat dict.
+    """
+    if path is None:
+        path = os.path.join('dataset', 'ssvep', 'S1.mat')
+    mat = scipy.io.loadmat(path)
+    return mat
+
+
+if __name__ == "__main__":
+    # When run as a script, execute both readers and print summaries.
+    edf_data = read_edf()
+    print('EDF data shape:', getattr(edf_data, 'shape', type(edf_data)))
+    mat = read_mat()
+    print('MAT keys:', list(mat.keys()))
 
 if __name__ == "__main__":
     # When run as a script, execute both readers. Importing this module will not
