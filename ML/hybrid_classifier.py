@@ -24,33 +24,43 @@ class HybridSSVEPClassifier:
             sos = self.sos
         return sosfiltfilt(sos, data, axis=-1)
 
-    def cca_ssvep_detection(self, trial_data):
-        """SSVEP Detection using Canonical Correlation Analysis (CCA)"""
-        # Extract only the relevant occipital channels for CCA
-        eeg_segment = trial_data[self.ssvep_channels, :].T
-        n_times = eeg_segment.shape[0]
-        r_max = -1
-        detected_class = 0
-
+    def cca_ssvep_detection(self, trial_data, num_harmonics=4, num_bands=3):
+        """Upgraded to Filter-Bank CCA (FBCCA) to eliminate 1/f biological noise"""
+        n_times = trial_data.shape[1]
         t = np.linspace(0, n_times / self.sample_freq, n_times, endpoint=False)
 
+        weights = [1.0, 0.65, 0.45] 
+        class_scores = np.zeros(len(self.target_freqs))
+        
         for class_idx, freq in enumerate(self.target_freqs):
-            ref_signals = np.zeros((n_times, 4))
-            ref_signals[:, 0] = np.sin(2 * np.pi * freq * t)
-            ref_signals[:, 1] = np.cos(2 * np.pi * freq * t)
-            ref_signals[:, 2] = np.sin(2 * np.pi * 2 * freq * t)
-            ref_signals[:, 3] = np.cos(2 * np.pi * 2 * freq * t)
+            ref_signals = np.zeros((n_times, 2 * num_harmonics))
+            for h in range(1, num_harmonics + 1):
+                ref_signals[:, 2*(h-1)] = np.sin(2 * np.pi * h * freq * t)
+                ref_signals[:, 2*(h-1)+1] = np.cos(2 * np.pi * h * freq * t)
+            
+            total_rho = 0
+            
+            for band in range(num_bands):
+                low_f = 8.0 + (band * 10.0) 
+                high_f = 88.0 
+                
+                sos = butter(4, [low_f, high_f], btype='band', fs=self.sample_freq, output='sos')
+                filtered_data = sosfiltfilt(sos, trial_data, axis=-1)
 
-            cca = CCA(n_components=1)
-            cca.fit(eeg_segment, ref_signals)
-            x_score, y_score = cca.transform(eeg_segment, ref_signals)
+                eeg_segment = filtered_data[self.ssvep_channels, :].T
+                
+                cca = CCA(n_components=1)
+                cca.fit(eeg_segment, ref_signals)
+                x_score, y_score = cca.transform(eeg_segment, ref_signals)
+                
 
-            r = np.corrcoef(x_score.T, y_score.T)[0, 1]
-            if r > r_max:
-                r_max = r
-                detected_class = class_idx
+                rho = np.corrcoef(x_score.T, y_score.T)[0, 1]
 
-        return detected_class
+                total_rho += (rho ** 2) * weights[band]
+                
+            class_scores[class_idx] = total_rho
+            
+        return np.argmax(class_scores)
 
     def artifact_detection(self, trial_data):
         """Artifact Detection using Time-Domain Peak Detection"""
