@@ -44,7 +44,7 @@ class Button(pygame.sprite.Sprite):
 
         # make sure image at center of circle
         # scale image to fit within block
-        scaled_icon = pygame.transform.scale(self.img, (size*1.5, size*1.5))
+        scaled_icon = pygame.transform.scale(self.img, (int(size * 1.5), int(size * 1.5)))
         # center it onto main circle
         icon_rect = scaled_icon.get_rect(center=(size, size))
         # draw icon onto button surface directly

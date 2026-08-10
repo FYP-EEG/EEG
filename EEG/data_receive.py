@@ -155,7 +155,7 @@ def plot_data(block=True):
     eeg_chann = BoardShim.get_eeg_channels(get_BID())[:8]
     print(eeg_chann)
 
-    fig, axes = plt.subplots(4, 2, figsize=(400,400,"px"))
+    fig, axes = plt.subplots(4, 2, figsize=(10, 8))
     axes_flat = axes.flatten() # Make it easy to iterate
         
     # Pre-create line objects for better performance

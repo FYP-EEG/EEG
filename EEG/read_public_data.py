@@ -39,7 +39,11 @@ def read_mat():
     mat = scipy.io.loadmat(data_dir)
     print(mat["data"])
 
-read_edf()
+if __name__ == "__main__":
+    # When run as a script, execute both readers. Importing this module will not
+    # trigger data loading.
+    read_edf()
+    read_mat()
 """
 (venv) D:\cu_hw\FYP>py eeg/read_public_data.py
 Extracting EDF parameters from dataset\mi\S001R01.edf...
@@ -52,8 +56,6 @@ Creating raw.info structure...
  [-2.1e-05 -1.2e-05  2.0e-06 ...  0.0e+00  0.0e+00  0.0e+00]
  [-1.1e-05  1.0e-06  1.8e-05 ...  0.0e+00  0.0e+00  0.0e+00]
  [ 1.5e-05  2.1e-05  3.5e-05 ...  0.0e+00  0.0e+00  0.0e+00]]
-"""
-read_mat()
 """
 (venv) D:\cu_hw\FYP>py eeg/read_mat.py
 [[[[-3.03335762e+01  6.85251770e+01 -1.00500555e+01 -1.91660080e+01
