@@ -5,6 +5,7 @@ Purpose: machine learning baseline
 Ideology: generate fake random data
 """
 
+import mne
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.pipeline import Pipeline
@@ -12,7 +13,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report, confusion_matrix
 from mne.decoding import CSP
-
+mne.set_log_level('WARNING')
 #====================================================
 # 1. Data simulation
 
@@ -31,8 +32,8 @@ X = np.random.randn(n_trials, n_channels, n_times)
 y = np.array([0, 1] * (n_trials // 2)) # 0 left hand, 1 right hand
 
 # Feature Injection
-#X[y == 0, :4, :] *= 1.5 
-#X[y == 1, 4:, :] *= 1.5
+X[y == 0, :4, :] *= 1.5 
+X[y == 1, 4:, :] *= 1.5
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
@@ -45,7 +46,7 @@ print("test shape:", X_test.shape)
 # 2. CSP+LDA pipeline
 
 csp = CSP(n_components=4, reg=None, log=True, rank=None) # log for linear distribution, n_components=4: extract the four most discriminative spatial features
-lda = LinearDiscriminantAnalysis()
+lda = LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto')
 
 # X_train -> CSP fetch 4 components -> LDA classification training
 bci_pipeline = Pipeline([
@@ -73,8 +74,7 @@ print(classification_report(y_test, y_pred, target_names=['Left Hand', 'Right Ha
 
 print("=== Confusion Matrix ===")
 #matrix to show correct guess and wrong guess
-cm = confusion_matrix(y_test, y_pred)
-print(cm)
+print(confusion_matrix(y_test, y_pred))
 
 print("\n5-Fold Cross Validation...")
 cv_scores = cross_val_score(bci_pipeline, X, y, cv=5, n_jobs=1)
