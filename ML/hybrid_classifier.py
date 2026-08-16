@@ -77,7 +77,8 @@ class HybridSSVEPClassifier:
         :param auto_filter: Whether to automatically apply the bandpass filter (default is True)
         :return: Predicted class index (0: 10Hz, 1: 12Hz, 2: Blink)
         """
-        trial_data = self.apply_filter(raw_trial_data) if auto_filter else raw_trial_data
+        # 1. bypass filter
+        trial_data = self.apply_filter(raw_trial_data, self.sos) if auto_filter else raw_trial_data
         
         if self.artifact_detection(trial_data):
             return 2  
