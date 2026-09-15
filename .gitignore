@@ -8,3 +8,4 @@ temp/
 venv/
 dataset/
 EEG/test_udp.py
+logbook/
