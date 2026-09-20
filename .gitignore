@@ -9,3 +9,4 @@ venv/
 dataset/
 EEG/test_udp.py
 logbook/
+dep.py
