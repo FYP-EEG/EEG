@@ -15,6 +15,7 @@ TWO MODES
 
 2. Cued app mode (new) - runs a real app and cues button targets:
        py EEG/data_record.py --file rockpaperscissors
+       py EEG/data_record.py --file rockpaperscissors --board-id 0 --serial-port COM4 to use headband and usb
        py EEG/data_record.py --file rockpaperscissors --trials 20 --cue 5
        py EEG/data_record.py --file realistic_ui --dry-run     (no EEG needed)
        py EEG/data_record.py --list
