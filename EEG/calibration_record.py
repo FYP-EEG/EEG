@@ -62,26 +62,66 @@ from ML import montage as montage_mod  # noqa: E402
 
 # --------------------------------------------------------------------- protocol
 #: (block name, class index, n_repeats, seconds each, on-screen instruction)
+"""
+MOTOR IMAGERY PROTOCOLS
+Added by Anson, 21/9/2026 (MI-only pivot)
+
+MI is a fundamentally different task from gaze, and the protocol has to reflect
+that:
+
+  * There is no stimulus to look at. The cue tells the user WHAT to imagine, and
+    the imagery itself produces the signal. So the cue must be short and the
+    imagery window must be long enough for the rhythm to desynchronise.
+  * The effect is a REDUCTION in mu/beta power (event-related desynchronisation),
+    which takes ~0.5-1 s to develop after the cue. The first second of each trial
+    is therefore partly unusable - which is why blocks are longer than the SSVEP
+    ones were.
+  * "Imagine squeezing your LEFT hand" works far better than "think about moving".
+    Kinaesthetic imagery (feel the muscles) beats visual imagery (picture a hand).
+  * REST blocks matter as much as here as they did for SSVEP: without them the
+    system cannot tell imagery from ordinary thinking.
+
+Class layout:
+    0 = imagine LEFT hand   -> desynchronisation over C4 (contralateral)
+    1 = imagine RIGHT hand  -> desynchronisation over C3
+   -1 = rest / no command
+    2 = deliberate blinks, for the artifact detector
+"""
+
+#: ~2 minute protocol for a per-session warm-up.
+#: Longer than the 60 s SSVEP version because MI trials need more time each and
+#: MI is inherently noisier, so more repetitions are needed for a stable estimate.
+QUICK_PROTOCOL = [
+    ("target_0",         0, 4, 6.0, "Imagine SQUEEZING your LEFT hand\n"
+                                    "Feel the muscles - do not actually move"),
+    ("target_1",         1, 4, 6.0, "Imagine SQUEEZING your RIGHT hand\n"
+                                    "Feel the muscles - do not actually move"),
+    ("idle",            -1, 2, 20.0, "REST. Stay still, let your mind wander.\n"
+                                     "Do not imagine any movement."),
+    ("idle_distracted", -1, 1, 15.0, "Count backwards from 100 in sevens.\n"
+                                     "Thinking hard, but NOT moving."),
+]
+
 DEFAULT_PROTOCOL = [
-    ("target_0",        0, 10,  5.0, "Stare at the LEFT tile (15 Hz)"),
-    ("target_1",        1, 10,  5.0, "Stare at the RIGHT tile (20 Hz)"),
-    ("idle",           -1,  5, 30.0, "REST. Eyes open, look at the centre cross.\n"
-                                     "Do not focus on either tile."),
-    ("idle_distracted", -1, 3, 30.0, "Read the text on screen / look around the room.\n"
-                                     "Ignore the tiles completely."),
-    ("artifact",        2,  4, 10.0, "Blink deliberately, about once per second."),
+    ("target_0",         0, 10, 6.0, "Imagine SQUEEZING your LEFT hand\n"
+                                     "Feel the muscles - do not actually move"),
+    ("target_1",         1, 10, 6.0, "Imagine SQUEEZING your RIGHT hand\n"
+                                     "Feel the muscles - do not actually move"),
+    ("idle",            -1,  5, 30.0, "REST. Stay still, let your mind wander.\n"
+                                      "Do not imagine any movement."),
+    ("idle_distracted", -1,  3, 30.0, "Count backwards from 100 in sevens.\n"
+                                      "Thinking hard, but NOT moving."),
+    ("artifact",         2,  4, 10.0, "Blink deliberately, about once per second."),
 ]
 
 CLASS_NAMES = {0: "target_0", 1: "target_1", -1: "idle", 2: "artifact"}
 
 DISTRACTION_TEXT = [
-    "The occipital cortex responds to periodic visual stimulation by",
-    "producing a steady-state response at the stimulus frequency and",
-    "its harmonics. This response is strongest over O1, Oz and O2.",
-    "Read this passage at your normal pace. Let your attention drift",
-    "away from the flickering tiles entirely. Look around the room,",
-    "check the window, glance at your hands. This block teaches the",
-    "system what 'not trying to select anything' actually looks like.",
+    "Count backwards from 100 in steps of seven, silently.",
+    "100, 93, 86, 79 ...",
+    "Keep your hands completely still and relaxed.",
+    "This block is hard mental work WITHOUT any movement imagery,",
+    "which teaches the system that thinking alone is not a command.",
 ]
 
 
@@ -250,28 +290,53 @@ class StimulusUI:
 
     def draw(self, block, instruction, remaining, progress, show_tiles=True,
              show_text=False, highlight=None):
+        """
+        Rewritten 21/9/2026 for motor imagery.
+
+        There is no flicker any more. MI needs the screen to say WHICH hand to
+        imagine and to hold that cue steady - a moving or flashing cue would only
+        add visual evoked activity on top of the motor rhythm we want.
+
+        highlight: 0 = left hand, 1 = right hand, None = rest / no imagery
+        """
         pg = self.pygame
         w, h = self.win.get_size()
         self.win.fill((16, 18, 24))
         self.frame += 1
 
-        if show_tiles:
-            for i, freq in enumerate(self.target_freqs):
-                on = self.stim.is_on(i)
-                base = (235, 235, 245) if on else (26, 28, 36)
-                cx = w * (0.25 if i == 0 else 0.75)
-                rect = pg.Rect(0, 0, 190, 190)
-                rect.center = (int(cx), int(h * 0.46))
-                pg.draw.rect(self.win, base, rect, border_radius=14)
-                ring = (250, 200, 90) if highlight == i else (70, 76, 96)
-                pg.draw.rect(self.win, ring, rect, width=6, border_radius=14)
-                lab = self.font.render(f"{freq:.0f} Hz", True, (150, 158, 180))
-                self.win.blit(lab, lab.get_rect(center=(rect.centerx, rect.bottom + 22)))
+        cx, cy = w // 2, int(h * 0.46)
+
+        if highlight in (0, 1):
+            # big directional arrow - unambiguous at a glance, and identical on
+            # every trial so it contributes the same visual response each time
+            side = -1 if highlight == 0 else 1
+            col = (235, 235, 245)
+            head = 46                                  # half-height of the head
+            tip_x = cx + side * int(w * 0.20)          # outermost point
+            base_x = tip_x - side * head               # where the head meets shaft
+            # shaft runs from the centre to the head base, overlapping slightly
+            # so there is no seam between the two shapes
+            shaft_far = cx - side * int(w * 0.04)
+            left = min(base_x + side * 4, shaft_far)
+            shaft = pg.Rect(left, cy - 13, abs(base_x + side * 4 - shaft_far), 26)
+            pg.draw.rect(self.win, col, shaft, border_radius=4)
+            pg.draw.polygon(self.win, col, [
+                (tip_x, cy),
+                (base_x, cy - head),
+                (base_x, cy + head),
+            ])
+            hand = "LEFT HAND" if highlight == 0 else "RIGHT HAND"
+            lab = self.font_big.render(hand, True, (250, 214, 110))
+            self.win.blit(lab, lab.get_rect(center=(cx, cy + 110)))
+            sub = self.font.render("imagine squeezing - do not move", True,
+                                   (150, 158, 180))
+            self.win.blit(sub, sub.get_rect(center=(cx, cy + 146)))
         else:
+            # fixation cross for rest, so the eyes have somewhere neutral to sit
             pg.draw.line(self.win, (120, 128, 150),
-                         (w // 2 - 18, int(h * 0.46)), (w // 2 + 18, int(h * 0.46)), 3)
+                         (cx - 20, cy), (cx + 20, cy), 3)
             pg.draw.line(self.win, (120, 128, 150),
-                         (w // 2, int(h * 0.46) - 18), (w // 2, int(h * 0.46) + 18), 3)
+                         (cx, cy - 20), (cx, cy + 20), 3)
 
         if show_text:
             y = int(h * 0.72)
@@ -280,11 +345,12 @@ class StimulusUI:
                 self.win.blit(surf, surf.get_rect(centerx=w // 2, top=y))
                 y += 21
 
-        title = self.font_big.render(block.replace("_", " ").upper(), True, (235, 240, 250))
+        title = self.font_big.render(block.replace("_", " ").upper(), True,
+                                     (235, 240, 250))
         self.win.blit(title, (28, 22))
         for i, line in enumerate(instruction.split("\n")):
-            s = self.font.render(line, True, (188, 196, 216))
-            self.win.blit(s, (28, 66 + i * 26))
+            srf = self.font.render(line, True, (188, 196, 216))
+            self.win.blit(srf, (28, 66 + i * 26))
 
         t = self.font_big.render(f"{remaining:4.1f}s", True, (250, 214, 110))
         self.win.blit(t, t.get_rect(topright=(w - 28, 22)))
@@ -406,7 +472,7 @@ def main():
     ap = argparse.ArgumentParser(description="BCI calibration recorder (Step 3)")
     ap.add_argument("--subject", default="S01")
     ap.add_argument("--backend", choices=["simulate", "brainflow"], default="simulate")
-    ap.add_argument("--montage", default="cyton8_ssvep")
+    ap.add_argument("--montage", default="cyton8_mi")
     ap.add_argument("--fs", type=int, default=250)
     ap.add_argument("--window", type=int, default=750, help="epoch length in samples")
     ap.add_argument("--hop", type=int, default=250, help="slide between epochs")
@@ -414,15 +480,19 @@ def main():
     ap.add_argument("--out", default=str(ROOT / "dataset"))
     ap.add_argument("--no-ui", action="store_true", help="record without the stimulus UI")
     ap.add_argument("--dry-run", action="store_true", help="print the protocol and exit")
+    ap.add_argument("--protocol", choices=["full", "quick"], default="full",
+                    help="'quick' = 60s per-session protocol; 'full' = 6.3min")
     ap.add_argument("--quick", action="store_true",
-                    help="shortened protocol for a pipeline smoke-test")
+                    help="tiny protocol for a pipeline smoke-test (not for real use)")
     ap.add_argument("--serial-port", default="COM4")
     ap.add_argument("--board-id", type=int, default=0)
     ap.add_argument("--yes", action="store_true", help="skip the safety confirmation")
     args = ap.parse_args()
 
     protocol = DEFAULT_PROTOCOL
-    if args.quick:
+    if args.protocol == "quick":
+        protocol = QUICK_PROTOCOL
+    elif args.quick:                       # smoke-test: tiny, not for real use
         protocol = [(b, c, 1, min(s, 6.0), i) for b, c, r, s, i in DEFAULT_PROTOCOL]
 
     total_s = sum(r * s for _, _, r, s, _ in protocol)

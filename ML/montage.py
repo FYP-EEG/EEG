@@ -22,7 +22,7 @@ BENCHMARK_64 = {
 # --- OpenBCI Cyton, 8 channels ------------------------------------------------
 # SSVEP-oriented placement. Wire the headset to match this or edit here.
 CYTON_8_SSVEP = {
-    "name": "cyton8_ssvep",
+    "name": "cyton8_motor",
     "n_channels": 8,
     "labels": ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"],
     "ssvep": [6, 7],             # O1, O2
