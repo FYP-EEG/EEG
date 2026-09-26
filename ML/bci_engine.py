@@ -25,7 +25,7 @@ from ML.hybrid_classifier import (HybridSSVEPClassifier, MotorImageryClassifier,
 
 
 class BCIEngine:
-    def __init__(self, mi_model_path=None, mode='SSVEP', debounce_window=3,
+    def __init__(self, mi_model_path=None, mode='MI', debounce_window=3,
                  confidence_threshold=0.15, montage="cyton8_ssvep",
                  target_freqs=(15.0, 20.0), sample_freq=250,
                  artifact_lockout_ms=800, refractory_ms=1200,

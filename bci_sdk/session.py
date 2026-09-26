@@ -57,7 +57,7 @@ class BCISession:
     IDLE_STATES = ("NO_ACTION", "BUILDING", "REFRACTORY", "LOCKOUT")
 
     def __init__(self, source="sim", profile=None, montage="cyton8_ssvep",
-                 target_freqs=(15.0, 20.0), sample_freq=250, mode="SSVEP",
+                 target_freqs=(15.0, 20.0), sample_freq=250, mode="MI",
                  window=750, hop=250, debounce=3, confidence_threshold=0.15,
                  serial_port="COM4", board_id=0, replay_npz=None,
                  fallback_to_sim=True, model=None):

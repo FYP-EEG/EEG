@@ -6,6 +6,18 @@ Edited on: 20/9/2026 - real game action buttons, flat translucent style
 
 A mock game HUD: inventory / message / shoot / reload / map.
 
+MOTOR IMAGERY CONTROL (21/9/2026)
+Motor imagery gives only TWO reliable commands - imagine left hand, imagine
+right hand - so five buttons cannot each have their own. Instead a highlight
+steps through the buttons:
+
+    imagine LEFT  hand  -> move the highlight to the next button
+    imagine RIGHT hand  -> select the highlighted button
+
+That is the same two-command scanning pattern used by the speller, and it is why
+the number of buttons does not have to be limited. Keyboard fallback: LEFT and
+RIGHT arrow keys do the same thing, so the UI is testable without a headset.
+
 Background: drop a gameplay screenshot at assets/background.png and it is used
 automatically. Otherwise the screen is black. A busy background matters for a
 real BCI test - a blank screen flatters any classifier - so a real capture is
@@ -37,10 +49,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 ##game
 pygame.init()
-win = pygame.display.set_mode((1720,880), pygame.RESIZABLE) #game window 800x600
+win = pygame.display.set_mode((800,600), pygame.RESIZABLE) #game window 800x600
 width, height = win.get_size()
 
-size = int(width*0.03)
+size = int(width*0.05)
 margin = int(width*0.0125)
 spacing = (size*2) + margin
 
@@ -105,11 +117,11 @@ Each entry is (id, name, icon file, x, y) where x and y are FRACTIONS of the
 window, so the layout survives a resize. Edit these to move buttons around.
 """
 LAYOUT = [
-    (0, "inventory", "inventory.png", 0.08, 0.4),
-    (1, "message",   "message.png",   0.08, 0.88),
-    (2, "shoot",     "shoot.png",     0.75, 0.7),
-    (3, "reload",    "reload.png",    0.9, 0.4),
-    (4, "map",       "map.png",       0.08, 0.15),
+    (0, "inventory", "inventory.png", 0.08, 0.88),
+    (1, "message",   "message.png",   0.28, 0.88),
+    (2, "shoot",     "shoot.png",     0.50, 0.88),
+    (3, "reload",    "reload.png",    0.72, 0.88),
+    (4, "map",       "map.png",       0.92, 0.88),
 ]
 
 def build_buttons():
@@ -134,6 +146,36 @@ def relayout():
 
 cursor = ""
 cursorUpdate = False
+
+"""
+Added by Anson
+Date: 21/9/2026
+Purpose: two-command scanning for motor imagery.
+
+`highlight` is the index of the button currently under the scan cursor. The
+highlighted button ripples so the user can see where the cursor is - that is
+cosmetic feedback only and has nothing to do with the brain signal, which comes
+entirely from imagined hand movement.
+"""
+highlight = 0
+
+def move_highlight():
+    """imagine LEFT hand -> step to the next button"""
+    global highlight
+    highlight = (highlight + 1) % len(buttons)
+    for i, b in enumerate(buttons):
+        b.stop_flash()
+    buttons[highlight].flash(loop=True, waves=2, pulse_hz=0.5)
+
+def select_highlighted():
+    """imagine RIGHT hand -> activate the highlighted button"""
+    b = buttons[highlight]
+    b.click()
+    selected["button"] = b
+    selected["at"] = pygame.time.get_ticks()
+
+# start with the first button highlighted
+buttons[highlight].flash(loop=True, waves=2, pulse_hz=0.5)
 
 #game loop
 run = True
@@ -212,6 +254,12 @@ while run:
     for e in pygame.event.get():
         if e.type == QUIT or (e.type == KEYDOWN and e.key == K_BACKSPACE):
             run = False
+        elif e.type == KEYDOWN and e.key == K_LEFT:
+            #stand-in for "imagine LEFT hand"
+            move_highlight()
+        elif e.type == KEYDOWN and e.key == K_RIGHT:
+            #stand-in for "imagine RIGHT hand"
+            select_highlighted()
         elif e.type == VIDEORESIZE:
             #get window size
             width, height = e.size#ie 800*600,height*0.9=540
@@ -271,6 +319,17 @@ while run:
             win.blit(big, big.get_rect(center=(width//2, height//2 - 30)))
         else:
             selected["button"] = None
+
+    """
+    Added by Anson
+    Date: 21/9/2026
+    Purpose: on-screen hint for the two motor-imagery commands.
+    """
+    hint_font = pygame.font.SysFont("dejavusans,arial", 15)
+    hint = hint_font.render(
+        f"imagine LEFT hand = next   |   imagine RIGHT hand = select   "
+        f"|   now on: {buttons[highlight].name}", True, (200, 208, 226))
+    win.blit(hint, (20, 16))
 
     for button in buttons:
         button.draw(win)
