@@ -22,7 +22,7 @@ BENCHMARK_64 = {
 # --- OpenBCI Cyton, 8 channels ------------------------------------------------
 # SSVEP-oriented placement. Wire the headset to match this or edit here.
 CYTON_8_SSVEP = {
-    "name": "cyton8_ssvep",
+    "name": "cyton8_motor",
     "n_channels": 8,
     "labels": ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"],
     "ssvep": [6, 7],             # O1, O2
@@ -40,11 +40,7 @@ CYTON_8_MOTOR = {
     "motor": [0, 1, 2, 3, 4, 5, 6, 7],
 }
 
-MONTAGES = {
-    "benchmark64": BENCHMARK_64,
-    "cyton8_ssvep": CYTON_8_SSVEP,
-    "cyton8_motor": CYTON_8_MOTOR,
-}
+MONTAGES = {m["name"]: m for m in (BENCHMARK_64, CYTON_8_SSVEP, CYTON_8_MOTOR)}
 
 
 def get(name):
