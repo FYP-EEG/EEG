@@ -194,20 +194,26 @@ class TangentSpaceMapper(BaseEstimator, TransformerMixin):
 
 
 # ---------------------------------------------------------------- pipelines
+class BandpassFilter(BaseEstimator, TransformerMixin):
+    def __init__(self, sample_freq=250, band=(8.0, 30.0)):
+        self.sample_freq = sample_freq
+        self.band = band
+
+    def fit(self, X, y=None):
+        self.sos_ = butter(4, list(self.band), btype='band',
+                           fs=self.sample_freq, output='sos')
+        return self
+
+    def transform(self, X):
+        return sosfiltfilt(self.sos_, np.asarray(X, float), axis=-1)
+
+
 def make_csp_lda(sample_freq=250, n_components=4):
     """Baseline for comparison: single-band CSP + shrinkage LDA."""
     from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
-    class _Band(BaseEstimator, TransformerMixin):
-        def fit(self, X, y=None):
-            self.sos_ = butter(4, [8.0, 30.0], btype='band',
-                               fs=sample_freq, output='sos')
-            return self
-        def transform(self, X):
-            return sosfiltfilt(self.sos_, np.asarray(X, float), axis=-1)
-
     return Pipeline([
-        ("band", _Band()),
+        ("band", BandpassFilter(sample_freq=sample_freq)),
         ("csp", CSP(n_components)),
         ("lda", LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto")),
     ])
