@@ -85,9 +85,24 @@ __all__ = [
     # acquisition
     "StreamBridge", "RingBuffer", "SyntheticBackend", "ReplayBackend",
     "BrainFlowBackend",
+    # local model serving + real-time decision (no network, no server)
+    "LocalMIModel", "SelectionTree", "RealtimeDecider", "ArtifactDetector",
+    "build_runtime", "LEFT", "RIGHT",
+    # live app integration
+    "LiveBCI", "ScanSelector", "SineProbe", "SineProbeModel",
     # errors
     "BCIError", "HardwareError", "CalibrationError", "NotCalibratedError",
 ]
+
+# ------------------------------- local inference: model file -> button action
+# Imported eagerly because none of it needs pygame or hardware; the model is a
+# file on disk and the decision path is pure numpy/scipy.
+from ML.local_model import LocalMIModel                      # noqa: E402
+from bci_sdk.selection import SelectionTree, LEFT, RIGHT     # noqa: E402
+from bci_sdk.runtime import (RealtimeDecider, ArtifactDetector,  # noqa: E402
+                             build_runtime)
+from bci_sdk.live import (LiveBCI, ScanSelector, SineProbe,     # noqa: E402
+                          SineProbeModel)
 
 # ------------------------------------------------------------- UI (needs pygame)
 try:

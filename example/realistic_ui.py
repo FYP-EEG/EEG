@@ -177,6 +177,53 @@ def select_highlighted():
 # start with the first button highlighted
 buttons[highlight].flash(loop=True, waves=2, pulse_hz=0.5)
 
+"""
+Edited by Anson
+Date: 6/10/2026
+Purpose: optional EEG control, --bci. The LEFT/RIGHT keyboard fallback is
+         untouched, so the UI still works with no headset.
+
+Default scheme is "scan" because this UI is already built around a moving
+highlight. "tree" is measurably cheaper for five buttons - 2.4 decisions
+against 3.0, and 34 s against 47 s per selection at 0.614 per-decision
+accuracy - so it is worth trying once the signal is real.
+
+    python example/realistic_ui.py --bci sine
+    python example/realistic_ui.py --bci cyton --user anson --port COM4 --scheme tree
+"""
+import argparse
+import sys as _sys
+from pathlib import Path as _Path
+
+_ap = argparse.ArgumentParser(add_help=False)
+_ap.add_argument("--bci", choices=["sine", "replay", "cyton"], default=None)
+_ap.add_argument("--user", default=None)
+_ap.add_argument("--port", default=None)
+_ap.add_argument("--recording", default=None)
+_ap.add_argument("--scheme", choices=["tree", "scan"], default="scan")
+_args, _ = _ap.parse_known_args()
+
+bci = None
+if _args.bci:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+    from bci_sdk.live import LiveBCI
+
+    def _highlight(cands):
+        for b in buttons:
+            b.stop_flash()
+        for b in cands:
+            b.flash(loop=True, waves=2, pulse_hz=0.5)
+
+    def _choose(b):
+        global highlight
+        highlight = buttons.index(b)
+        select_highlighted()
+
+    bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
+                  serial_port=_args.port, recording=_args.recording,
+                  scheme=_args.scheme, on_select=_choose,
+                  on_change=_highlight).start()
+
 #game loop
 run = True
 """
@@ -330,6 +377,9 @@ while run:
         f"imagine LEFT hand = next   |   imagine RIGHT hand = select   "
         f"|   now on: {buttons[highlight].name}", True, (200, 208, 226))
     win.blit(hint, (20, 16))
+
+    if bci is not None:
+        bci.poll()                                  # non-blocking
 
     for button in buttons:
         button.draw(win)

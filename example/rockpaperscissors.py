@@ -81,6 +81,51 @@ scissors = Button(2, "scissors", size, (center_x + spacing, center_y),
                   os.path.join(path, "hand-peace-solid.png"), func=pick_scissors)
 
 buttons = [rock, paper, scissors]
+
+"""
+Edited by Anson
+Date: 6/10/2026
+Purpose: optional EEG control, --bci.
+
+Mouse still works exactly as before; this only adds a second input source.
+With three buttons the tree needs at most two decisions (scissors resolves in
+one), against three for scanning.
+
+    python example/rockpaperscissors.py --bci sine
+    python example/rockpaperscissors.py --bci cyton --user anson --port COM4
+"""
+import argparse
+
+_ap = argparse.ArgumentParser(add_help=False)
+_ap.add_argument("--bci", choices=["sine", "replay", "cyton"], default=None)
+_ap.add_argument("--user", default=None)
+_ap.add_argument("--port", default=None)
+_ap.add_argument("--recording", default=None)
+_ap.add_argument("--scheme", choices=["tree", "scan"], default="tree")
+_args, _ = _ap.parse_known_args()
+
+bci = None
+if _args.bci:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from bci_sdk.live import LiveBCI
+
+    def _highlight(cands):
+        for b in buttons:
+            b.stop_flash()
+        for b in cands:
+            b.flash(loop=True, waves=2, pulse_hz=0.5)
+
+    def _choose(b):
+        b.click()                                   # runs pick_rock() etc.
+        for o in buttons:
+            o.stop_flash()
+        b.flash(duration=4.0, waves=2)
+
+    bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
+                  serial_port=_args.port, recording=_args.recording,
+                  scheme=_args.scheme, on_select=_choose,
+                  on_change=_highlight).start()
+
 cursor = ""
 cursorUpdate = False
 
@@ -157,6 +202,9 @@ while run:
             if e.button == 1:
                 cursor = e.pos
                 cursorUpdate = True
+
+    if bci is not None:
+        bci.poll()                                  # non-blocking
 
     """
     Edited by Anson
