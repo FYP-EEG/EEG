@@ -218,7 +218,7 @@ class App:
             return False
 
         out = self.profile.recording_path()
-        cr.save(X, y, labels, self.profile.slug, 250, "cyton8_ssvep", actual,
+        cr.save(X, y, labels, self.profile.slug, 250, "cyton8_motor", actual,
                 out.parent)
         rec = sorted(out.parent.glob("calib_*.npz"))[-1]
 

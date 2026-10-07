@@ -257,9 +257,11 @@ class LiveBCI:
             artifact_uv = 1e9          # a test sine is not an artifact
         else:
             from ML.local_model import LocalMIModel
-            if not user:
-                raise ValueError("source=%r needs user=" % source)
-            self.model = LocalMIModel.load(user)
+            # user=None is legitimate: a first-time user has no personal model
+            # and must fall back to the bundled starter. LocalMIModel.load()
+            # already does personal -> starter -> FileNotFoundError, so the
+            # only thing a missing name costs is the personal lookup.
+            self.model = LocalMIModel.load(user or "_anonymous")
             artifact_uv = 100.0
 
         # ---- selector

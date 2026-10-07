@@ -57,7 +57,7 @@ class BCISession:
     IDLE_STATES = ("NO_ACTION", "BUILDING", "REFRACTORY", "LOCKOUT")
 
     def __init__(self, source="sim", profile=None, montage="cyton8_ssvep",
-                 target_freqs=(15.0, 20.0), sample_freq=250, mode="MI",
+                 target_freqs=(15.0, 20.0), sample_freq=250, mode="SSVEP",
                  window=750, hop=250, debounce=3, confidence_threshold=0.15,
                  serial_port="COM4", board_id=0, replay_npz=None,
                  fallback_to_sim=True, model=None):
@@ -170,7 +170,16 @@ class BCISession:
     def _make_backend(self, source, serial_port, board_id, replay_npz, fallback):
         if source == "hardware":
             try:
-                return BrainFlowBackend(board_id=board_id, serial_port=serial_port)
+                be = BrainFlowBackend(board_id=board_id, serial_port=serial_port)
+                # Constructing a BrainFlowBackend does NOT touch the hardware -
+                # BrainFlow only opens the port on prepare_session(). Without
+                # this probe, asking for a board with no dongle attached
+                # succeeds here and fails much later, somewhere less obvious.
+                # That is a lab session lost to a USB plug.
+                be.start()
+                be.stop()
+                return BrainFlowBackend(board_id=board_id,
+                                        serial_port=serial_port)
             except Exception as exc:
                 if not fallback:
                     raise HardwareError(

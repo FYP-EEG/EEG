@@ -1046,7 +1046,7 @@ def layer4():
             sl = slice(b * 16, (b + 1) * 16)
             np.savez_compressed(udir / f"calib_{b}.npz", X=X[sl],
                                 labels=np.array(lab[sl]), fs=250,
-                                montage="cyton8_mi")
+                                montage="cyton8_motor")
 
         from ML.train_local import train_user
         res = train_user("demo", root=tmp, verbose=False)

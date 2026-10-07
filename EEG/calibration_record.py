@@ -134,20 +134,58 @@ def epoch_seconds_to_windows(seconds, fs, window, hop):
 
 # ------------------------------------------------------------------- backends
 class SimulateBackend:
-    """Synthetic acquisition so the protocol can be rehearsed without hardware."""
+    """Synthetic MOTOR IMAGERY acquisition, so the protocol can be rehearsed
+    without hardware.
+
+    Rewritten 26/9/2026. It used to generate SSVEP - a clean sine wave on the
+    occipital channels - which made every pipeline look brilliant for the wrong
+    reason: fbcsp scored a perfect 100% because it was detecting a pure tone that
+    real motor imagery never produces.
+
+    Real MI is an event-related DESYNCHRONISATION: a modest, noisy REDUCTION in
+    mu (~8-13 Hz) and beta (~18-26 Hz) band power over the motor cortex, on the
+    side OPPOSITE the imagined hand. It is a power change with random phase, not
+    an added oscillation, and the effect is small relative to background EEG.
+
+    Modelling that honestly means rehearsal numbers stay realistic instead of
+    flattering.
+    """
 
     name = "simulate"
 
     def __init__(self, fs=250, n_channels=8, target_freqs=(15.0, 20.0),
-                 occipital=(6, 7), frontal=(0, 1), seed=None):
+                 occipital=(6, 7), frontal=(0, 1), seed=None,
+                 c3=2, c4=4, erd_strength=0.45, subject_seed=None):
+        """
+        :param seed:         noise for THIS session. Vary it between sessions.
+        :param subject_seed: head geometry, mu frequency, electrode mixing.
+                             Keep it FIXED to simulate the same person across
+                             several days; vary it to simulate different people.
+
+        Separating the two matters. If both change together, every session is a
+        different person, the motor sources land on different electrodes, and a
+        model trained across sessions scores BELOW chance - which looks like a
+        code bug but is really 'you trained on six different heads'.
+        """
         self.fs = fs
         self.n_channels = n_channels
-        self.target_freqs = list(target_freqs)
+        self.target_freqs = list(target_freqs)   # kept for API compatibility
         self.occipital = list(occipital)
         self.frontal = list(frontal)
+        self.c3 = c3                              # left motor cortex
+        self.c4 = c4                              # right motor cortex
+        self.erd_strength = erd_strength
         self.rng = np.random.default_rng(seed)
         self._state = None
         self._t0 = 0.0
+        # subject traits come from their OWN generator so they survive a change
+        # of session seed
+        srng = np.random.default_rng(subject_seed if subject_seed is not None
+                                     else seed)
+        self._mu = srng.uniform(9.0, 12.5)
+        self._beta = srng.uniform(18.0, 26.0)
+        self._mix = (np.eye(n_channels)
+                     + 0.35 * srng.standard_normal((n_channels, n_channels)))
 
     def start(self):
         self._t0 = 0.0
@@ -158,41 +196,55 @@ class SimulateBackend:
     def set_state(self, block_name, class_idx):
         self._state = (block_name, class_idx)
 
-    def read(self, n_samples):
-        """Return (n_channels, n_samples) of synthetic uV data for the current block."""
-        t = self._t0 + np.arange(n_samples) / self.fs
-        self._t0 += n_samples / self.fs
-        x = self.rng.standard_normal((self.n_channels, n_samples)) * 3.0
+    def _band_noise(self, n, lo, hi):
+        """Random-phase activity in a band - a power source, not a fixed tone."""
+        from scipy.signal import butter, sosfiltfilt
+        x = self.rng.standard_normal((2, n))
+        sos = butter(4, [lo, hi], btype="band", fs=self.fs, output="sos")
+        return sosfiltfilt(sos, x, axis=-1)
 
-        # resting alpha, always present, strongest occipitally
-        a_f = self.rng.uniform(9.5, 10.5)
-        a_ph = self.rng.uniform(0, 2 * np.pi)
-        for ch in self.occipital:
-            x[ch] += 4.5 * np.sin(2 * np.pi * a_f * t + a_ph)
+    def read(self, n_samples):
+        """Return (n_channels, n_samples) of synthetic uV data."""
+        n = n_samples
+        self._t0 += n / self.fs
+        x = self.rng.standard_normal((self.n_channels, n)) * 3.0
+
+        # background alpha everywhere - non-discriminative, present always
+        x += 1.4 * np.repeat(
+            self._band_noise(n, 8.0, 13.0)[:1], self.n_channels, axis=0)
 
         block, cls = self._state or ("idle", -1)
+
+        # sensorimotor rhythms at C3 / C4, random phase every trial
+        mu = self._band_noise(n, max(1.0, self._mu - 2), self._mu + 2)
+        beta = self._band_noise(n, self._beta - 3, self._beta + 3)
+
+        gain_c3 = gain_c4 = 1.0
         if cls in (0, 1):
-            freq = self.target_freqs[cls]
-            ph = self.rng.uniform(0, 2 * np.pi)
-            for ch in self.occipital:
-                for h, amp in ((1, 1.0), (2, 0.45), (3, 0.2)):
-                    x[ch] += 2.0 * amp * np.sin(2 * np.pi * h * freq * t + ph)
-        elif cls == 2:
+            # ERD is CONTRALATERAL: left-hand imagery quietens the RIGHT cortex
+            drop = np.clip(self.erd_strength * self.rng.normal(1.0, 0.3), 0.0, 0.9)
+            if cls == 0:            # imagine LEFT hand  -> C4 desynchronises
+                gain_c4 = 1.0 - drop
+            else:                   # imagine RIGHT hand -> C3 desynchronises
+                gain_c3 = 1.0 - drop
+
+        x[self.c3] += 1.5 * gain_c3 * mu[0] + 0.7 * gain_c3 * beta[0]
+        x[self.c4] += 1.5 * gain_c4 * mu[1] + 0.7 * gain_c4 * beta[1]
+
+        if cls == 2:
             # ~1 blink/sec: 150-250 uV frontal deflections
-            for onset in range(0, n_samples, int(self.fs)):
-                w = min(int(0.15 * self.fs), n_samples - onset)
+            for onset in range(0, n, int(self.fs)):
+                w = min(int(0.15 * self.fs), n - onset)
                 if w <= 0:
                     continue
                 shape = np.hanning(w) * self.rng.uniform(150, 250)
                 for ch in self.frontal:
                     x[ch, onset:onset + w] += shape
         elif block == "idle_distracted":
-            # drifting eye movement + occasional muscle bursts
-            x += np.linspace(0, self.rng.uniform(-8, 8), n_samples)[None, :]
-            if self.rng.random() < 0.3:
-                s = self.rng.integers(0, max(1, n_samples - 50))
-                x[:, s:s + 50] += self.rng.standard_normal((self.n_channels, 50)) * 12
-        return x
+            x += np.linspace(0, self.rng.uniform(-8, 8), n)[None, :]
+
+        # volume conduction: sources mix across electrodes
+        return self._mix @ x
 
 
 class BrainFlowBackend:
@@ -472,7 +524,7 @@ def main():
     ap = argparse.ArgumentParser(description="BCI calibration recorder (Step 3)")
     ap.add_argument("--subject", default="S01")
     ap.add_argument("--backend", choices=["simulate", "brainflow"], default="simulate")
-    ap.add_argument("--montage", default="cyton8_mi")
+    ap.add_argument("--montage", default="cyton8_motor")
     ap.add_argument("--fs", type=int, default=250)
     ap.add_argument("--window", type=int, default=750, help="epoch length in samples")
     ap.add_argument("--hop", type=int, default=250, help="slide between epochs")
