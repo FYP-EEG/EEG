@@ -132,7 +132,8 @@ def load_user_data(user, root=None, include=("target_0", "target_1")):
 
 
 # ----------------------------------------------------------------- training
-def train_user(user, root=None, sample_freq=None, n_splits=4, verbose=True):
+def train_user(user, root=None, sample_freq=None, n_splits=4, verbose=True,
+               screen=True):
     """Train every pipeline on this user's data and keep the best.
 
     :return: dict with the winner, all scores, and where the model was saved.
@@ -140,6 +141,26 @@ def train_user(user, root=None, sample_freq=None, n_splits=4, verbose=True):
     """
     root = Path(root) if root else PROFILES
     data = load_user_data(user, root=root)
+
+    # ---- trial screening (ML/quality.py)
+    # Measured: removes electrode pops for +1.8 to +2.6 points, and with the
+    # permissive 400 uV default it drops nothing on clean or merely-blinky
+    # data. It CANNOT detect a user who imagined the wrong hand - only the cue
+    # log can, see ML/quality.load_cue_log.
+    if screen:
+        from ML.quality import screen_trials
+        _sc = screen_trials(data["X"], data["y"], fs=data["fs"], verbose=False)
+        _keep = _sc["keep"]
+        if _keep.sum() < 8:
+            if verbose:
+                print("  screening would leave too little data - skipped")
+        elif not _keep.all():
+            if verbose:
+                print("\n  Trial screening")
+                print(_sc["report"])
+            for _k in ("X", "y", "groups"):
+                if _k in data and len(data[_k]) == len(_keep):
+                    data[_k] = data[_k][_keep]
     X, y, groups = data["X"], data["y"], data["groups"]
     fs = sample_freq or data["fs"]
 
@@ -288,10 +309,16 @@ def starter_model(root=None):
 
     Returns None if the package was built without one.
     """
-    p = Path(root) if root else (ROOT / "ML" / "starter_model.joblib")
-    if not p.exists():
-        return None
-    return joblib.load(p)
+    if root:
+        p = Path(root)
+        return joblib.load(p) if p.exists() else None
+    # The PhysioNet notebook exports as mi_model_8ch.joblib; accept that name
+    # as well so a downloaded Colab model works without being renamed.
+    for name in ("starter_model.joblib", "mi_model_8ch.joblib"):
+        p = ROOT / "ML" / name
+        if p.exists():
+            return joblib.load(p)
+    return None
 
 
 def get_model(user, root=None):

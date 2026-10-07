@@ -15,7 +15,6 @@ TWO MODES
 
 2. Cued app mode (new) - runs a real app and cues button targets:
        py EEG/data_record.py --file rockpaperscissors
-       py EEG/data_record.py --file rockpaperscissors --board-id 0 --serial-port COM4 to use headband and usb
        py EEG/data_record.py --file rockpaperscissors --trials 20 --cue 5
        py EEG/data_record.py --file realistic_ui --dry-run     (no EEG needed)
        py EEG/data_record.py --list
@@ -46,9 +45,13 @@ import argparse
 import csv
 import datetime as dt
 import random
+import threading
+import time
 import string
 import sys
 from pathlib import Path
+
+import numpy as np
 
 import pygame
 #import constants for easier access to key events
@@ -72,6 +75,170 @@ def _load_bci():
 # =====================================================================
 #  CUED APP MODE
 # =====================================================================
+# =====================================================================
+#  SHARED RECORDING FORMAT
+# =====================================================================
+# Calibration and cued-app recording must produce byte-identical file layouts,
+# or ML/train_local.py can read only one of them. Rather than duplicate the
+# writer, both call EEG/calibration_record.save(), which is the single
+# definition of the format:
+#
+#     calib_<subject>_<stamp>.npz
+#       X               (n_trials, n_channels, n_times) float32, microvolts
+#       y               int64 class index
+#       labels          "target_0" | "target_1" | "idle" | "artifact"
+#       fs, montage, channel_labels, subject, created, target_freqs
+#
+# WHY THE LABEL IS A HAND AND NOT A BUTTON
+# ----------------------------------------
+# Motor-imagery classes are body parts, because the cortex is somatotopic:
+# the left hand sits in right C4, the right hand in left C3. There is no
+# cortical representation of "rock" or "inventory", so a button cannot be a
+# class.
+#
+# With two hand classes and a binary selection tree, a button is reached by a
+# SEQUENCE of decisions - rock is left-then-left, scissors is right. A trial
+# cued as "rock" is therefore not one label but two, and saving it under a
+# single label would mix two different imagined movements into one epoch.
+# That is worse than having no label.
+#
+# So calibration cues one DECISION per trial - "imagine your LEFT hand" -
+# while the app highlights the group that decision keeps. The user sees the
+# real interface and the real consequence, so it remains a rehearsal of actual
+# use, but every epoch carries exactly one hand label.
+#
+# Feet are deliberately not used. They are reserved for continuous movement
+# control later; adding them now would turn a 2-class problem into a 3-class
+# one, which measured 70.8% -> 63.2% per decision and would drop csp_lda and
+# fbcsp out of the pipeline competition, since that CSP supports 2 classes.
+
+
+def save_session(X, y, labels, subject, fs, montage_name, out_dir,
+                 target_freqs=(0.0, 0.0)):
+    """Write cued-app EEG in the SAME format calibration uses."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "calrec", Path(__file__).resolve().parent / "calibration_record.py")
+    calrec = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(calrec)
+    return calrec.save(X, y, labels, subject, fs, montage_name,
+                       target_freqs, out_dir)
+
+
+def epoch_from_log(stream, fs, log, t0_ms, window_s=3.0):
+    """Cut a continuous recording into trials using the cue log.
+
+    :param stream: (n_channels, n_samples) for the whole session
+    :param t0_ms:  pygame tick at which stream sample 0 was captured
+    :param log:    rows carrying cue_start_ms and a "label" of target_0/1
+    :return: (X, y, labels), ready to hand to save_session
+    """
+    stream = np.asarray(stream, dtype=np.float64)
+    n = int(window_s * fs)
+    X, y, labels = [], [], []
+    for row in log:
+        lab = row.get("label")
+        if lab not in ("target_0", "target_1"):
+            continue
+        if row.get("cue_sample") is not None:
+            start = int(row["cue_sample"])          # exact, drift-free
+        else:
+            start = int((row["cue_start_ms"] - t0_ms) / 1000.0 * fs)
+        if start < 0 or start + n > stream.shape[1]:
+            continue                       # cue fell outside the recording
+        X.append(stream[:, start:start + n])
+        y.append(int(lab[-1]))
+        labels.append(lab)
+    return np.asarray(X), np.asarray(y), np.asarray(labels)
+
+class SessionCapture:
+    """Record the whole session continuously and index it by SAMPLE COUNT.
+
+    Why not wall-clock: a cue happens at a pygame tick, but the EEG arrives in
+    chunks whose timing drifts against the system clock. Converting ms to a
+    sample index accumulates that drift, and a 3 s epoch cut 200 ms late is a
+    3 s epoch of the wrong thing.
+
+    Instead, every cue records how many samples had arrived at the moment it
+    started. That index is exact by construction, because it comes from the
+    same counter the data does.
+    """
+
+    def __init__(self, backend):
+        self.backend = backend
+        info = backend.info()
+        self.fs = info["fs"]
+        self.n_channels = info["n_channels"]
+        self._chunks = []
+        self._n = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+
+    @property
+    def n_samples(self):
+        with self._lock:
+            return self._n
+
+    def start(self):
+        self.backend.start()
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="SessionCapture")
+        self._thread.start()
+        return self
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                chunk = self.backend.read_available()
+            except Exception:
+                chunk = None
+            if chunk is not None and chunk.size:
+                with self._lock:
+                    self._chunks.append(np.asarray(chunk, dtype=np.float32))
+                    self._n += chunk.shape[1]
+            else:
+                time.sleep(0.005)
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        try:
+            self.backend.stop()
+        except Exception:
+            pass
+        return self.data()
+
+    def data(self):
+        with self._lock:
+            if not self._chunks:
+                return np.zeros((self.n_channels, 0), dtype=np.float32)
+            return np.concatenate(self._chunks, axis=1)
+
+
+#: which hand presses which anchor button. Two classes only - feet are
+#: reserved for continuous movement control later.
+HAND_LABELS = {0: ("LEFT", "target_0"), 1: ("RIGHT", "target_1")}
+
+
+def build_hand_order(n_trials, seed=None):
+    """Balanced, shuffled hand sequence: equal LEFT and RIGHT, never a long run.
+
+    A long run of one hand lets the user coast - they stop re-forming the
+    imagery and the later trials in the run carry weaker ERD. Shuffling within
+    balanced pairs caps the run length at two.
+    """
+    rng = random.Random(seed)
+    order = []
+    while len(order) < n_trials:
+        pair = [0, 1]
+        rng.shuffle(pair)
+        order.extend(pair)
+    return order[:n_trials]
+
+
 class CuedRecorder:
     """Drives cue → wait → rest trials over an unmodified example script."""
 
@@ -79,7 +246,25 @@ class CuedRecorder:
     REST = "REST"
     DONE = "DONE"
 
-    def __init__(self, bci, trials=10, cue_s=5.0, rest_s=2.0, script="app"):
+    def __init__(self, bci, trials=10, cue_s=5.0, rest_s=2.0, script="app",
+                 mi=False, capture=None, anchors=None):
+        """
+        :param mi: calibration mode. Cues a HAND per trial instead of a button,
+            because that is the only thing the cortex distinguishes. "Press
+            rock with your left hand" and "press scissors with your left hand"
+            are the same signal - left-hand imagery - so a button cannot be a
+            class. The anchor button makes the instruction concrete without
+            pretending it is a separate class.
+        :param capture: SessionCapture, so each cue can record the sample index
+            it began at and the stream can be epoched exactly afterwards.
+        :param anchors: (left_button, right_button). Defaults to the leftmost
+            and rightmost on screen, which keeps the instruction spatially
+            congruent with the hand being imagined.
+        """
+        self.mi = mi
+        self.capture = capture
+        self.anchors = anchors
+        self.hand_order = []
         self.bci = bci                    # None in --dry-run
         self.n_trials = trials
         self.cue_ms = int(cue_s * 1000)
@@ -93,6 +278,7 @@ class CuedRecorder:
         self.phase_end = 0
         self.target = None
         self.started = False
+        self.done_at = None
 
         self.clicked = None               # last button clicked, for the overlay
         self.clicked_at = 0
@@ -150,8 +336,21 @@ class CuedRecorder:
             print(f"  [marker failed: {exc}]")
 
     # ------------------------------------------------------- trial engine
+    def _pick_anchors(self):
+        """Leftmost and rightmost button, by screen position."""
+        if self.anchors:
+            return self.anchors
+        ordered = sorted(self.buttons,
+                         key=lambda b: getattr(getattr(b, "rect", None),
+                                               "centerx", 0))
+        return ordered[0], ordered[-1]
+
     def _build_order(self):
         """Balanced, shuffled target sequence - every button appears equally."""
+        if self.mi:
+            self.hand_order = build_hand_order(self.n_trials)
+            left, right = self._pick_anchors()
+            return [(left if h == 0 else right) for h in self.hand_order]
         order = []
         while len(order) < self.n_trials:
             batch = list(self.buttons)
@@ -172,8 +371,19 @@ class CuedRecorder:
         # loop=True so the ripple runs for the whole cue, however long it is
         self.target.flash(loop=True, waves=2, pulse_hz=0.5)
 
-        self._marker(self.target.name, "start")
-        print(f"  trial {self.trial}/{self.n_trials}: LOOK AT '{self.target.name}'")
+        self.cue_sample = (self.capture.n_samples
+                           if self.capture is not None else None)
+        if self.mi:
+            hand, _lab = HAND_LABELS[self.hand_order[self.trial - 1]]
+            self.cue_hand = self.hand_order[self.trial - 1]
+            self._marker(f"hand_{hand}", "start")
+            print(f"  trial {self.trial}/{self.n_trials}: imagine PRESSING "
+                  f"'{self.target.name}' with your {hand} hand")
+        else:
+            self.cue_hand = None
+            self._marker(self.target.name, "start")
+            print(f"  trial {self.trial}/{self.n_trials}: "
+                  f"LOOK AT '{self.target.name}'")
 
     def _end_cue(self, now):
         self._marker(self.target.name, "end")
@@ -184,7 +394,7 @@ class CuedRecorder:
         verdict = "correct" if ok else (f"clicked {hit.name}" if hit else "no click")
         print(f"           -> {verdict}")
 
-        self.log.append({
+        row = {
             "trial": self.trial,
             "target": self.target.name,
             "target_id": self.target.id,
@@ -192,13 +402,21 @@ class CuedRecorder:
             "cue_end_ms": now,
             "clicked": hit.name if hit else "",
             "correct": int(ok),
-        })
+        }
+        if self.mi:
+            hand, label = HAND_LABELS[self.cue_hand]
+            row["hand"] = hand
+            row["label"] = label
+            row["cue_sample"] = self.cue_sample
+        self.log.append(row)
 
         self.phase = self.REST
         self.phase_end = now + self.rest_ms
 
     def update(self, now):
         if self.phase == self.DONE:
+            if self.mi and now - getattr(self, "done_at", now) > 2000:
+                pygame.event.post(pygame.event.Event(pygame.QUIT))
             return
 
         if not self.started:
@@ -219,7 +437,16 @@ class CuedRecorder:
         elif self.phase == self.REST and now >= self.phase_end:
             if self.trial >= self.n_trials:
                 self.phase = self.DONE
-                print("\n  all trials complete - close the window to finish")
+                self.done_at = now
+                if self.mi:
+                    # Calibration ends itself. Leaving the window open after
+                    # the last cue means the saved file depends on when
+                    # somebody happens to click the X, and a session that is
+                    # never closed is a session never written to disk.
+                    print("\n  all trials complete - saving in 2s")
+                else:
+                    print("\n  all trials complete - close the window "
+                          "to finish")
             else:
                 self._start_cue(now)
 
@@ -274,6 +501,10 @@ class CuedRecorder:
             t = self.font_sm.render(f"{left:4.1f}s", True, (150, 158, 180))
             win.blit(t, t.get_rect(topright=(w - 18, 38)))
 
+        if self.mi and self.phase == self.CUE and self.cue_hand is not None:
+            hand, _ = HAND_LABELS[self.cue_hand]
+            self.hint = (f"imagine PRESSING {self.target.name} "
+                         f"with your {hand} hand")
         rec = "REC" if self.bci is not None else "DRY-RUN (no EEG)"
         reccol = (220, 90, 90) if self.bci is not None else (140, 146, 164)
         win.blit(self.font_sm.render(rec, True, reccol), (18, 40))
@@ -312,14 +543,41 @@ def run_example(args):
         print(f"Available: {', '.join(sorted(p.stem for p in EXAMPLE_DIR.glob('*.py') if p.stem != '__init__'))}")
         return 1
 
-    BCI = None
-    if not args.dry_run:
+    BCI = capture = None
+    if args.mi:
+        # Calibration mode owns the stream itself, through StreamBridge's
+        # BrainFlowBackend, because it must keep every sample to epoch
+        # afterwards. The LSL path used for marker-only recording hands
+        # samples onward and keeps nothing.
+        if not args.subject:
+            print("--mi needs --subject")
+            return 1
+        if args.dry_run:
+            from stream_bridge import SyntheticBackend
+            backend = SyntheticBackend(fs=250, n_channels=8)
+            print("DRY-RUN: synthetic backend, no hardware touched")
+        else:
+            from stream_bridge import BrainFlowBackend
+            # serial_port must be a string: BrainFlow rejects None with a
+            # bare GENERAL_ERROR:17 that says nothing about the cause. The
+            # synthetic board (-1) needs no port at all.
+            backend = BrainFlowBackend(board_id=args.board_id,
+                                       serial_port=args.serial_port or "",
+                                       n_channels=8)
+            print(f"Recording started (board_id={args.board_id})")
+        capture = SessionCapture(backend).start()
+    elif not args.dry_run:
         BCI = _load_bci()
         BCI.start(BID=args.board_id, port=args.serial_port, plot_domain="f")
         print(f"Recording started (board_id={args.board_id})")
 
     rec = CuedRecorder(BCI, trials=args.trials, cue_s=args.cue,
-                       rest_s=args.rest, script=script.stem)
+                       rest_s=args.rest, script=script.stem,
+                       mi=args.mi, capture=capture)
+    if args.mi and args.cue < 3.0:
+        print(f"  WARNING: cue {args.cue}s is shorter than the 3.0s epoch "
+              f"window, so most of every epoch would be rest. Use --cue 4 "
+              f"or more.")
 
     print(f"\nRunning {script.name}")
     print(f"  {args.trials} trials · {args.cue}s cue · {args.rest}s rest")
@@ -399,6 +657,23 @@ def run_example(args):
         if BCI is not None:
             BCI.end()
             print("  EEG recording stopped")
+        if capture is not None:
+            stream = capture.stop()
+            print(f"  captured {stream.shape[1] / capture.fs:.1f}s "
+                  f"({stream.shape[1]} samples)")
+            X, y, labels = epoch_from_log(stream, capture.fs, rec.log,
+                                          t0_ms=0)
+            if len(X) == 0:
+                print("  no usable epochs - was the cue shorter than 3 s?")
+            else:
+                out = Path(args.out) if args.out else (
+                    ROOT / "profiles" / args.subject.lower())
+                npz = save_session(X, y, labels, args.subject, capture.fs,
+                                   args.montage, out)
+                n0 = int((y == 0).sum()); n1 = int((y == 1).sum())
+                print(f"  {len(X)} epochs  (LEFT {n0} / RIGHT {n1})")
+                print(f"  calibration -> {npz}")
+                print(f"  next:  python ML/train_local.py {args.subject}")
         try:
             pygame.quit()
         except Exception:
@@ -564,6 +839,14 @@ def cli():
     ap.add_argument("--dry-run", action="store_true",
                     help="run the UI and cues without recording EEG")
     ap.add_argument("--list", action="store_true", help="list example scripts")
+    ap.add_argument("--mi", action="store_true",
+                    help="CALIBRATION mode: cue a hand per trial and write a "
+                         "calib_*.npz that ML/train_local.py can train on")
+    ap.add_argument("--subject", default=None,
+                    help="subject name for --mi (required)")
+    ap.add_argument("--montage", default="cyton8_motor")
+    ap.add_argument("--out", default=None,
+                    help="output dir for --mi (default profiles/<subject>)")
     args = ap.parse_args()
 
     if args.list:

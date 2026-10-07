@@ -69,7 +69,19 @@ class LocalMIModel:
 
     def __init__(self, model, sample_freq=250, montage=None, units="uV",
                  confidence_threshold=0.65, source="unknown", meta=None,
-                 class_map=None):
+                 class_map=None, prefilter=None, scale=1.0):
+        """
+        :param prefilter: (low, high) Hz to apply before predicting, or None
+            when the pipeline band-passes internally. Models trained by
+            ML/train_local.py own their filtering, so None. A model exported
+            from Colab after `raw.filter(8, 30)` does NOT, and needs (8, 30):
+            measured 50.0% unfiltered vs 90.5% filtered on contaminated input.
+        :param scale: multiply input by this before predicting. 1.0 for models
+            trained on uV; 1e-6 for models trained on volts-scale EDF. Our own
+            pipelines trace-normalise and ignore scale entirely, but MNE's CSP
+            with log=True, norm_trace=False does not -- at x1e6 its label
+            agreement drops to 83.3%.
+        """
         self.model = model
         self.sample_freq = int(sample_freq)
         self.montage = montage
@@ -78,6 +90,13 @@ class LocalMIModel:
         self.source = source                      # 'personal' | 'starter'
         self.meta = meta or {}
         self.class_map = dict(class_map or DEFAULT_CLASS_MAP)
+        self.prefilter = tuple(prefilter) if prefilter else None
+        self.scale = float(scale)
+        self._sos = None
+        if self.prefilter:
+            from scipy.signal import butter
+            self._sos = butter(4, list(self.prefilter), btype="band",
+                               fs=self.sample_freq, output="sos")
 
     # ------------------------------------------------------------------ load
     @classmethod
@@ -90,6 +109,18 @@ class LocalMIModel:
         from ML.train_local import get_model
 
         bundle, source = get_model(user, root=root)
+
+        # A model exported from Colab is usually a BARE sklearn pipeline, not
+        # the dict ML/train_local.py writes. Accept both, so a starter model
+        # trained on public data can simply be dropped into ML/.
+        colab = False
+        if bundle is not None and not isinstance(bundle, dict):
+            colab = source == "starter"
+            bundle = {"model": bundle, "sample_freq": 250,
+                      "pipeline": type(bundle).__name__,
+                      "montage": "cyton8_motor" if colab else None,
+                      "note": "PhysioNet starter model exported from Colab"
+                              if colab else "bare estimator, no metadata"}
         if bundle is None:
             raise FileNotFoundError(
                 f"no model for {user!r}: train one with "
@@ -100,13 +131,44 @@ class LocalMIModel:
         if thr is None:
             thr = cls._threshold_from_profile(user, root)
 
+        # A bare Colab pipeline band-passed its RAW data before epoching and
+        # trained on volts-scale EDF, so it needs both applied here: measured
+        # 50.0% without the contract against 90.5% with it.
         return cls(model=bundle["model"],
                    sample_freq=bundle.get("sample_freq", 250),
                    montage=bundle.get("montage"),
-                   units="uV",
+                   units="volts" if colab else "uV",
                    confidence_threshold=thr,
                    source=source,
-                   meta={k: v for k, v in bundle.items() if k != "model"})
+                   meta={k: v for k, v in bundle.items() if k != "model"},
+                   prefilter=(8.0, 30.0) if colab else None,
+                   scale=1e-6 if colab else 1.0)
+
+    @classmethod
+    def from_colab(cls, path, sample_freq=250, prefilter=(8.0, 30.0),
+                   scale=1e-6, montage="cyton8_motor",
+                   confidence_threshold=0.65):
+        """Load a bare pipeline exported from the PhysioNet training notebook.
+
+        Defaults match that notebook exactly: MNE applied `raw.filter(8, 30)`
+        before epoching, so the pipeline has no filter of its own, and EDF data
+        is in volts while the board streams uV.
+
+        Channel order needs no remapping any more. The notebook picks
+        FC3 FC4 C3 CZ C4 CP3 CP4 PZ, and `cyton8_motor` - the montage this
+        project now records with - is exactly that list, so the starter model
+        and live recordings sit on the same electrodes.
+        """
+        import joblib
+        obj = joblib.load(path)
+        model = obj["model"] if isinstance(obj, dict) and "model" in obj else obj
+        return cls(model=model, sample_freq=sample_freq, montage=montage,
+                   units="volts" if scale != 1.0 else "uV",
+                   confidence_threshold=confidence_threshold, source="starter",
+                   meta={"pipeline": type(model).__name__,
+                         "note": "PhysioNet starter model, 61.40% +/- 1.01 "
+                                 "5-fold CV, 4927 trials"},
+                   prefilter=prefilter, scale=scale)
 
     @staticmethod
     def _threshold_from_profile(user, root=None, default=0.65):
@@ -138,6 +200,11 @@ class LocalMIModel:
         x = np.asarray(window, dtype=np.float64)
         if x.ndim != 2:
             raise ValueError(f"expected (channels, samples), got {x.shape}")
+        if self.scale != 1.0:
+            x = x * self.scale
+        if self._sos is not None:
+            from scipy.signal import sosfiltfilt
+            x = sosfiltfilt(self._sos, x, axis=-1)
         return x[np.newaxis, ...]
 
     def predict_proba(self, window):
@@ -173,6 +240,8 @@ class LocalMIModel:
             "sample_freq": self.sample_freq,
             "montage": self.montage,
             "confidence_threshold": self.confidence_threshold,
+            "prefilter": self.prefilter,
+            "scale": self.scale,
             "trained_at": m.get("trained_at"),
         }
 
