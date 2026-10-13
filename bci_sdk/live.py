@@ -5,6 +5,8 @@ Purpose: drop a live BCI into an existing pygame app in a few lines.
 
     bci = LiveBCI(buttons, source="sine")        # plumbing check, no EEG
     bci = LiveBCI(buttons, source="cyton", user="anson", serial_port="COM4")
+    bci = LiveBCI(buttons, source="button-mi", user="anson",
+                  app="rockpaperscissors", serial_port="COM4")
 
     while running:                                # once per frame, non-blocking
         r = bci.poll()
@@ -18,7 +20,11 @@ WHAT "source" MEANS
            classifier is SineProbeModel, which maps 10 Hz -> LEFT and
            15 Hz -> RIGHT. Nothing about motor imagery is exercised.
   replay   a recorded .npz played back at wall-clock rate
-  cyton    the real board, with this user's trained model
+  cyton    the real board, with this user's existing LEFT/RIGHT model
+  button-mi
+           the real board, with an experimental app-specific model that emits
+           a button name directly. It uses DirectButtonSelector and never enters
+           the LEFT/RIGHT tree/scan path.
 
   THE SINE PROVES THE PLUMBING, MOTOR IMAGERY PROVES THE CLASSIFIER.
   A pure sine contains no event-related desynchronisation, so feeding it to a
@@ -50,6 +56,7 @@ for _sub in ("", "EEG"):
         sys.path.insert(0, _p)
 
 from bci_sdk.selection import SelectionTree, LEFT, RIGHT       # noqa: E402
+from bci_sdk.direct import DirectButtonSelector                 # noqa: E402
 from bci_sdk.runtime import RealtimeDecider, ArtifactDetector  # noqa: E402
 
 NO_ACTION = -1
@@ -244,7 +251,7 @@ class LiveBCI:
                  serial_port=None, recording=None, sample_freq=250,
                  window=750, hop=250, on_select=None, on_change=None,
                  freq_map=None, probe_channels=(1, 2), verbose=True,
-                 **decider_kw):
+                 app=None, model_root=None, **decider_kw):
         self.verbose = verbose
         self.source = source
         self.sample_freq = sample_freq
@@ -255,6 +262,12 @@ class LiveBCI:
                                         sample_freq=sample_freq,
                                         channels=list(probe_channels))
             artifact_uv = 1e9          # a test sine is not an artifact
+        elif source == "button-mi":
+            from ML.button_mi import ButtonMIModel
+            if not user or not app:
+                raise ValueError("source='button-mi' requires user= and app=")
+            self.model = ButtonMIModel.load(user, app, root=model_root)
+            artifact_uv = 100.0
         else:
             from ML.local_model import LocalMIModel
             # user=None is legitimate: a first-time user has no personal model
@@ -264,9 +277,20 @@ class LiveBCI:
             self.model = LocalMIModel.load(user or "_anonymous")
             artifact_uv = 100.0
 
-        # ---- selector
-        sel = SelectionTree if scheme == "tree" else ScanSelector
-        self.selector = sel(buttons, on_select=on_select, on_change=on_change)
+        # ---- selector: direct mode is isolated from LEFT/RIGHT navigation
+        if source == "button-mi":
+            self.selector = DirectButtonSelector(
+                buttons, on_select=on_select, on_change=on_change)
+            missing = set(self.model.class_map.values()) - set(self.selector.names)
+            if missing:
+                raise ValueError(
+                    f"button-MI model expects buttons {sorted(missing)!r}, but "
+                    f"this UI exposes {sorted(self.selector.names)!r}")
+            active_scheme = "direct"
+        else:
+            sel = SelectionTree if scheme == "tree" else ScanSelector
+            self.selector = sel(buttons, on_select=on_select, on_change=on_change)
+            active_scheme = scheme
 
         self.decider = RealtimeDecider(
             self.model, self.selector,
@@ -278,7 +302,7 @@ class LiveBCI:
         self.bridge = self._make_bridge(source, serial_port, recording,
                                         sample_freq, window, hop)
         if self.verbose:
-            print(f"[LiveBCI] source={source} scheme={scheme} "
+            print(f"[LiveBCI] source={source} scheme={active_scheme} "
                   f"model={self.model}")
 
     def _make_bridge(self, source, serial_port, recording, fs, window, hop):
@@ -286,7 +310,7 @@ class LiveBCI:
         if source in ("sine", "synthetic"):
             backend = BrainFlowBackend(board_id=-1, serial_port="",
                                        n_channels=8)
-        elif source == "replay":
+        elif source == "replay" or (source == "button-mi" and recording):
             backend = ReplayBackend(recording, loop=True, hop=hop)
         else:
             backend = BrainFlowBackend(board_id=0, serial_port=serial_port,

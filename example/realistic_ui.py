@@ -190,13 +190,20 @@ accuracy - so it is worth trying once the signal is real.
 
     python example/realistic_ui.py --bci sine
     python example/realistic_ui.py --bci cyton --user anson --port COM4 --scheme tree
+
+Edited by Anson
+Date: 13/10/2026
+Purpose: add isolated direct-button MI. This emits inventory/message/shoot/
+         reload/map directly and does not change the scan/tree implementation.
+
+    python example/realistic_ui.py --bci button-mi --user anson --port COM4
 """
 import argparse
 import sys as _sys
 from pathlib import Path as _Path
 
 _ap = argparse.ArgumentParser(add_help=False)
-_ap.add_argument("--bci", choices=["sine", "replay", "cyton"], default=None)
+_ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi"], default=None)
 _ap.add_argument("--user", default=None)
 _ap.add_argument("--port", default=None)
 _ap.add_argument("--recording", default=None)
@@ -221,8 +228,12 @@ if _args.bci:
 
     bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
                   serial_port=_args.port, recording=_args.recording,
-                  scheme=_args.scheme, on_select=_choose,
-                  on_change=_highlight).start()
+                  scheme=_args.scheme, app="realistic_ui",
+                  on_select=_choose, on_change=_highlight).start()
+    if _args.bci == "button-mi":
+        # Direct mode has no scan cursor; all buttons are always candidates.
+        for _button in buttons:
+            _button.stop_flash()
 
 #game loop
 run = True
@@ -373,9 +384,12 @@ while run:
     Purpose: on-screen hint for the two motor-imagery commands.
     """
     hint_font = pygame.font.SysFont("dejavusans,arial", 15)
-    hint = hint_font.render(
-        f"imagine LEFT hand = next   |   imagine RIGHT hand = select   "
-        f"|   now on: {buttons[highlight].name}", True, (200, 208, 226))
+    if _args.bci == "button-mi":
+        hint_text = "imagine reaching to and pressing the intended button - keep still"
+    else:
+        hint_text = (f"imagine LEFT hand = next   |   imagine RIGHT hand = select   "
+                     f"|   now on: {buttons[highlight].name}")
+    hint = hint_font.render(hint_text, True, (200, 208, 226))
     win.blit(hint, (20, 16))
 
     if bci is not None:
@@ -383,6 +397,19 @@ while run:
 
     for button in buttons:
         button.draw(win)
+
+    """
+    Edited by Anson
+    Date: 13/10/2026
+    Purpose: explicit frame hook for EEG/data_record.py.
+
+    Normal play has no injected callback and is unchanged. During recording,
+    this keeps cue/rest timing alive even if monkey-patched pygame presentation
+    functions are cached or bypassed by the local pygame/SDL build.
+    """
+    _record_frame = globals().get("__bci_recorder_frame__")
+    if callable(_record_frame):
+        _record_frame()
 
     #update full display surface to screen
     pygame.display.flip()
