@@ -705,6 +705,94 @@ def layer3():
     for n in ["load_benchmark_mat","load_physionet_edf","load_calibration_npz",
               "pick_channels","combine","datasets"]:
         check(f"exports {n}", hasattr(bci_sdk,n))
+
+    print("\n== Experimental direct-button MI is isolated and multi-class ==")
+    from ML.button_mi import (make_button_label, parse_button_label,
+                              button_profile_dir, ButtonMIModel)
+    from ML.train_button_mi import train_button_user
+    button_labels = [make_button_label(i, name)
+                     for i, name in enumerate(("rock", "paper", "scissors"))]
+    check("button label round-trip preserves screen index and name",
+          parse_button_label(button_labels[2]) == (2, "scissors"))
+
+    from EEG.data_record import (CuedRecorder, epoch_from_log,
+                                 epoch_button_mi_from_log)
+    probe_stream = np.zeros((8, 1200))
+    direct_log = [{"label": button_labels[1], "button_index": 1,
+                   "cue_sample": 20, "cue_start_ms": 0}]
+    bX, by, bl = epoch_button_mi_from_log(probe_stream, 250, direct_log, 0)
+    hX, hy, hl = epoch_from_log(probe_stream, 250, direct_log, 0)
+    check("direct recorder writes a 3-second button-labelled epoch",
+          bX.shape == (1, 8, 750) and by.tolist() == [1] and
+          bl.tolist() == [button_labels[1]])
+    check("existing LEFT/RIGHT epocher ignores direct-button labels",
+          len(hX) == len(hy) == len(hl) == 0)
+
+    class RecorderClock:
+        def __init__(self): self.now = 0.0
+        def __call__(self): return self.now
+        def advance(self, ms): self.now += ms
+
+    class RecorderButton:
+        def __init__(self, index, name):
+            self.id, self.name, self.is_flashing = index, name, False
+        def flash(self, **kwargs): self.is_flashing = True
+        def stop_flash(self): self.is_flashing = False
+
+    recorder_clock = RecorderClock()
+    recorder = CuedRecorder(
+        None, trials=3, cue_s=4, rest_s=10, button_mi=True,
+        clock=recorder_clock)
+    recorder.buttons = [RecorderButton(i, name) for i, name in enumerate(
+        ("rock", "paper", "scissors"))]
+    recorder.update(900000)       # pygame tick before a display reset
+    recorder_clock.advance(10001)
+    recorder.update(0)            # pygame tick restarted, monotonic time did not
+    check("10-second REST survives a pygame timer reset and starts trial 1",
+          recorder.phase == recorder.CUE and recorder.trial == 1)
+
+    with tempfile.TemporaryDirectory() as button_tmp_text:
+        button_root = Path(button_tmp_text)
+        button_dir = button_profile_dir("demo", "rockpaperscissors",
+                                        root=button_root)
+        button_dir.mkdir(parents=True)
+        brng = np.random.default_rng(123)
+        # Three complete sessions. Each class has a distinct imagined-action
+        # covariance (a strong synthetic ERD only for software verification).
+        for session in range(3):
+            bx, by, bl = [], [], []
+            for cls in range(3):
+                for _ in range(10):
+                    epoch = brng.normal(0, 5.0, (8, 750))
+                    epoch[2 + cls] *= 0.18
+                    bx.append(epoch); by.append(cls); bl.append(button_labels[cls])
+            order = brng.permutation(len(by))
+            np.savez_compressed(
+                button_dir / f"calib_demo_session{session}.npz",
+                X=np.asarray(bx)[order], y=np.asarray(by)[order],
+                labels=np.asarray(bl)[order], fs=250,
+                montage="cyton8_motor")
+
+        button_result = train_button_user(
+            "demo", "rockpaperscissors", root=button_root,
+            n_splits=3, screen=False, verbose=False)
+        check("three-class button trainer produces its separate model",
+              button_result is not None and
+              (button_dir / "button_model.joblib").exists())
+        check("button model never overwrites LEFT/RIGHT model.joblib",
+              not (button_root / "demo" / "model.joblib").exists())
+        check("held-out-session button accuracy is above 3-class chance",
+              button_result["accuracy"] is not None and
+              button_result["accuracy"] > 0.70)
+        button_model = ButtonMIModel.load(
+            "demo", "rockpaperscissors", root=button_root,
+            confidence_threshold=0.0)
+        command, button_conf = button_model.predict_command(np.asarray(bx)[0])
+        check("loaded button model emits an actual button name directly",
+              command in {"rock", "paper", "scissors"} and button_conf > 0)
+        check("button model records app-specific three-class chance",
+              abs(button_model.describe()["chance_accuracy"] - 1/3) < 1e-12)
+
     layer_total('LAYER 3 - OFFLINE MODEL')
 
 
@@ -823,6 +911,7 @@ def layer4():
 
 
     from bci_sdk.selection import SelectionTree, LEFT, RIGHT          # noqa: E402
+    from bci_sdk.direct import DirectButtonSelector                    # noqa: E402
     from bci_sdk.runtime import (RealtimeDecider, ArtifactDetector,    # noqa: E402
                                  BLINK, LOCKOUT, BUILDING, REFRACTORY,
                                  REJECTED, DISPATCHED)
@@ -918,6 +1007,31 @@ def layer4():
     tr3.decide(RIGHT); tr3.decide(RIGHT)          # resolves and fires
     check(tr3.undo() == list(range(5)),
           "undo() after a selection cannot un-fire it; tree stays reset")
+
+    # =====================================================================
+    print("\n2b. Experimental direct-button dispatch is not a tree")
+    # =====================================================================
+    direct_buttons = [Btn("rock"), Btn("paper"), Btn("scissors")]
+    direct_picks = []
+    direct = DirectButtonSelector(direct_buttons,
+                                  on_select=lambda b: direct_picks.append(b.name))
+    check(direct.names == ["rock", "paper", "scissors"],
+          "direct selector exposes exact button names")
+    clk_direct = Clock()
+    direct_decider = RealtimeDecider(
+        FakeModel([("paper", .95)] * 3), direct, clock=clk_direct,
+        debounce_window=3, refractory_ms=0)
+    direct_results = [direct_decider.step(np.zeros((8, 750))) for _ in range(3)]
+    check(direct_results[-1]["selected"] is direct_buttons[1],
+          "one accepted class selects Paper directly (no LEFT/RIGHT sequence)")
+    check(direct_picks == ["paper"] and
+          [b.fired for b in direct_buttons] == [0, 1, 0],
+          "direct prediction fires exactly the named button")
+    try:
+        direct.decide("unknown")
+        check(False, "unknown direct-button output fails loudly")
+    except ValueError:
+        check(True, "unknown direct-button output fails loudly")
 
     # =====================================================================
     print("\n3. Gates: consecutive agreement")

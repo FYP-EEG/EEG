@@ -8,16 +8,33 @@ Edited on: 20/9/2026
 Changes: added --file mode. Runs a script from example/, cues the user with a
          flashing button, and records EEG for the whole session.
 
-TWO MODES
----------
+Edited by Anson
+Date: 13/10/2026
+Purpose: add an isolated, experimental --button-mi mode. It labels the actual
+         app buttons directly and never changes the existing --mi hand mode.
+
+Edited by Anson
+Date: 13/10/2026
+Purpose: prevent intermittent REST stalls by using a monotonic phase clock and
+         advancing from event.get(), display.flip(), or display.update().
+
+MODES
+-----
 1. Character mode (original, unchanged) - flashes typed/random characters:
        py EEG/data_record.py
 
-2. Cued app mode (new) - runs a real app and cues button targets:
+2. Cued app mode - runs a real app and cues button targets:
        py EEG/data_record.py --file rockpaperscissors
        py EEG/data_record.py --file rockpaperscissors --trials 20 --cue 5
        py EEG/data_record.py --file realistic_ui --dry-run     (no EEG needed)
        py EEG/data_record.py --list
+
+3. Existing LEFT/RIGHT MI calibration (unchanged):
+       py EEG/data_record.py --file rockpaperscissors --mi --subject anson
+
+4. Experimental direct-button MI calibration (separate files/model):
+       py EEG/data_record.py --file rockpaperscissors --button-mi \
+            --button-hand right --subject anson --trials 90 --cue 4
 
 WHY CUED RECORDING
 ------------------
@@ -59,7 +76,9 @@ from pygame.locals import *
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_DIR = ROOT / "example"
-sys.path.insert(0, str(ROOT / "pygame_lib"))
+for _path in (ROOT, ROOT / "pygame_lib"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 
 def _load_bci():
@@ -89,28 +108,39 @@ def _load_bci():
 #       labels          "target_0" | "target_1" | "idle" | "artifact"
 #       fs, montage, channel_labels, subject, created, target_freqs
 #
-# WHY THE LABEL IS A HAND AND NOT A BUTTON
-# ----------------------------------------
-# Motor-imagery classes are body parts, because the cortex is somatotopic:
-# the left hand sits in right C4, the right hand in left C3. There is no
-# cortical representation of "rock" or "inventory", so a button cannot be a
-# class.
+# TWO ISOLATED MI LABEL CONTRACTS
+# -------------------------------
+# --mi is the established path. Its classes remain target_0/target_1 =
+# LEFT/RIGHT hand, and buttons are reached through the existing selector.
+# Nothing in the experimental mode below changes that contract.
 #
-# With two hand classes and a binary selection tree, a button is reached by a
-# SEQUENCE of decisions - rock is left-then-left, scissors is right. A trial
-# cued as "rock" is therefore not one label but two, and saving it under a
-# single label would mix two different imagined movements into one epoch.
-# That is worse than having no label.
+# --button-mi is an opt-in experiment. It stores button::NNN::<name> and asks
+# the participant to imagine the complete spatial reach-and-press action for
+# that exact on-screen button. This does NOT imply that EEG reads the semantic
+# idea of "rock" or "paper". If all imagined movements are physically identical,
+# the classes will probably remain near chance. Different screen positions give
+# the imagined movements the only plausible motor distinction.
 #
-# So calibration cues one DECISION per trial - "imagine your LEFT hand" -
-# while the app highlights the group that decision keeps. The user sees the
-# real interface and the real consequence, so it remains a rehearsal of actual
-# use, but every epoch carries exactly one hand label.
-#
-# Feet are deliberately not used. They are reserved for continuous movement
-# control later; adding them now would turn a 2-class problem into a 3-class
-# one, which measured 70.8% -> 63.2% per decision and would drop csp_lda and
-# fbcsp out of the pipeline competition, since that CSP supports 2 classes.
+# Direct-button recordings are isolated under
+# profiles/<user>/button_mi/<app>/ and are trained by ML/train_button_mi.py.
+# ML/train_local.py never sees them. Feet are not used in either mode.
+
+
+_BUTTON_LABEL_FN = None
+
+
+def _load_button_label_fn():
+    """Load the direct-label helper outside any timed cue.
+
+    Importing ML.button_mi for the first time took ~0.9 s on Linux and nearly
+    4 s on one Windows machine. It used to happen inside _start_cue(), after the
+    CUE clock had already started, so trial 1 lost most of its visible time.
+    """
+    global _BUTTON_LABEL_FN
+    if _BUTTON_LABEL_FN is None:
+        from ML.button_mi import make_button_label
+        _BUTTON_LABEL_FN = make_button_label
+    return _BUTTON_LABEL_FN
 
 
 def save_session(X, y, labels, subject, fs, montage_name, out_dir,
@@ -151,6 +181,34 @@ def epoch_from_log(stream, fs, log, t0_ms, window_s=3.0):
         labels.append(lab)
     return np.asarray(X), np.asarray(y), np.asarray(labels)
 
+
+def epoch_button_mi_from_log(stream, fs, log, t0_ms, window_s=3.0):
+    """Cut direct-button trials without accepting LEFT/RIGHT labels.
+
+    Kept separate from epoch_from_log() so changing the experimental label set
+    cannot alter the established two-class MI calibration path.
+    """
+    from ML.button_mi import BUTTON_LABEL_PREFIX
+
+    stream = np.asarray(stream, dtype=np.float64)
+    n = int(window_s * fs)
+    X, y, labels = [], [], []
+    for row in log:
+        label = str(row.get("label", ""))
+        if not label.startswith(BUTTON_LABEL_PREFIX):
+            continue
+        if row.get("cue_sample") is not None:
+            start = int(row["cue_sample"])
+        else:
+            start = int((row["cue_start_ms"] - t0_ms) / 1000.0 * fs)
+        if start < 0 or start + n > stream.shape[1]:
+            continue
+        X.append(stream[:, start:start + n])
+        y.append(int(row["button_index"]))
+        labels.append(label)
+    return np.asarray(X), np.asarray(y), np.asarray(labels)
+
+
 class SessionCapture:
     """Record the whole session continuously and index it by SAMPLE COUNT.
 
@@ -177,8 +235,16 @@ class SessionCapture:
 
     @property
     def n_samples(self):
-        with self._lock:
-            return self._n
+        """Atomic snapshot used to mark a cue without blocking the UI thread.
+
+        ``_n`` is a Python integer and assignment is atomic under the GIL. The
+        old lock-taking getter could be starved by the capture thread repeatedly
+        reacquiring the lock; on Windows this blocked the first cue for 3-4
+        seconds while EEG capture continued. A lock-free snapshot is the right
+        boundary semantics here: a concurrently arriving chunk belongs either
+        just before or just after the cue, and the integer is never torn.
+        """
+        return self._n
 
     def start(self):
         self.backend.start()
@@ -198,6 +264,10 @@ class SessionCapture:
                 with self._lock:
                     self._chunks.append(np.asarray(chunk, dtype=np.float32))
                     self._n += chunk.shape[1]
+                # Always yield after a successful read. BrainFlow buffers data,
+                # so this loses no samples; it prevents the acquisition thread
+                # from immediately reacquiring _lock and starving the UI.
+                time.sleep(0.001)
             else:
                 time.sleep(0.005)
 
@@ -247,24 +317,32 @@ class CuedRecorder:
     DONE = "DONE"
 
     def __init__(self, bci, trials=10, cue_s=5.0, rest_s=2.0, script="app",
-                 mi=False, capture=None, anchors=None):
+                 mi=False, button_mi=False, button_hand="RIGHT", capture=None,
+                 anchors=None, clock=None):
         """
-        :param mi: calibration mode. Cues a HAND per trial instead of a button,
-            because that is the only thing the cortex distinguishes. "Press
-            rock with your left hand" and "press scissors with your left hand"
-            are the same signal - left-hand imagery - so a button cannot be a
-            class. The anchor button makes the instruction concrete without
-            pretending it is a separate class.
+        :param mi: established calibration mode; labels LEFT/RIGHT hand only.
+        :param button_mi: isolated experiment; labels the spatially distinct
+            reach-and-press action for each actual app button.
+        :param button_hand: one fixed hand used for every direct-button trial,
+            so the class is the target movement rather than LEFT versus RIGHT.
         :param capture: SessionCapture, so each cue can record the sample index
             it began at and the stream can be epoched exactly afterwards.
-        :param anchors: (left_button, right_button). Defaults to the leftmost
-            and rightmost on screen, which keeps the instruction spatially
-            congruent with the hand being imagined.
+        :param anchors: (left_button, right_button) for the existing --mi mode.
+        :param clock: monotonic milliseconds provider, injectable for tests.
+            Phase timing deliberately does not use pygame.time.get_ticks(): that
+            counter can restart when an app reinitialises pygame/display, which
+            previously left REST waiting for an obsolete deadline.
         """
-        self.mi = mi
+        if mi and button_mi:
+            raise ValueError("--mi and --button-mi are separate modes")
+        self.mi = bool(mi)
+        self.button_mi = bool(button_mi)
+        self.capture_mode = self.mi or self.button_mi
+        self.button_hand = str(button_hand).upper()
         self.capture = capture
         self.anchors = anchors
         self.hand_order = []
+        self._clock = clock or (lambda: time.monotonic() * 1000.0)
         self.bci = bci                    # None in --dry-run
         self.n_trials = trials
         self.cue_ms = int(cue_s * 1000)
@@ -345,12 +423,21 @@ class CuedRecorder:
                                                "centerx", 0))
         return ordered[0], ordered[-1]
 
+    def _button_label(self, button):
+        """Direct-mode label in stable left-to-right screen order."""
+        make_button_label = _load_button_label_fn()
+        return make_button_label(self.buttons.index(button), button.name)
+
     def _build_order(self):
         """Balanced, shuffled target sequence - every button appears equally."""
         if self.mi:
             self.hand_order = build_hand_order(self.n_trials)
             left, right = self._pick_anchors()
             return [(left if h == 0 else right) for h in self.hand_order]
+        if self.button_mi:
+            names = [str(b.name) for b in self.buttons]
+            if len(names) != len(set(names)):
+                raise ValueError("--button-mi requires unique Button.name values")
         order = []
         while len(order) < self.n_trials:
             batch = list(self.buttons)
@@ -363,7 +450,7 @@ class CuedRecorder:
         self.target = self.order[self.trial - 1]
         self.trial_click = None
         self.phase = self.CUE
-        self.phase_end = now + self.cue_ms
+        self.phase_end = self._clock() + self.cue_ms
         self.cue_start = now
 
         for b in self.buttons:
@@ -379,6 +466,12 @@ class CuedRecorder:
             self._marker(f"hand_{hand}", "start")
             print(f"  trial {self.trial}/{self.n_trials}: imagine PRESSING "
                   f"'{self.target.name}' with your {hand} hand")
+        elif self.button_mi:
+            self.cue_hand = None
+            self._marker(self._button_label(self.target), "start")
+            print(f"  trial {self.trial}/{self.n_trials}: imagine REACHING to "
+                  f"and PRESSING '{self.target.name}' with your "
+                  f"{self.button_hand} hand - do not move")
         else:
             self.cue_hand = None
             self._marker(self.target.name, "start")
@@ -386,12 +479,19 @@ class CuedRecorder:
                   f"LOOK AT '{self.target.name}'")
 
     def _end_cue(self, now):
-        self._marker(self.target.name, "end")
+        marker_name = (self._button_label(self.target)
+                       if self.button_mi else self.target.name)
+        self._marker(marker_name, "end")
         self.target.stop_flash()
 
         hit = self.trial_click
         ok = hit is self.target
-        verdict = "correct" if ok else (f"clicked {hit.name}" if hit else "no click")
+        if self.button_mi:
+            # Mental compliance is not observable. Asking for a real click would
+            # contaminate the imagery trial with movement and muscle activity.
+            verdict = "imagery recorded (no physical click required)"
+        else:
+            verdict = "correct" if ok else (f"clicked {hit.name}" if hit else "no click")
         print(f"           -> {verdict}")
 
         row = {
@@ -401,21 +501,39 @@ class CuedRecorder:
             "cue_start_ms": self.cue_start,
             "cue_end_ms": now,
             "clicked": hit.name if hit else "",
-            "correct": int(ok),
+            "correct": "" if self.button_mi else int(ok),
         }
         if self.mi:
             hand, label = HAND_LABELS[self.cue_hand]
             row["hand"] = hand
             row["label"] = label
             row["cue_sample"] = self.cue_sample
+        elif self.button_mi:
+            row["button_hand"] = self.button_hand
+            row["button_index"] = self.buttons.index(self.target)
+            row["label"] = self._button_label(self.target)
+            row["cue_sample"] = self.cue_sample
+            row["compliance"] = "not_observable"
         self.log.append(row)
 
         self.phase = self.REST
-        self.phase_end = now + self.rest_ms
+        self.phase_end = self._clock() + self.rest_ms
+        print(f"           rest {self.rest_ms / 1000.0:.1f}s")
 
-    def update(self, now):
+    def update(self, now=None):
+        """Advance the trial engine using a monotonic clock.
+
+        ``now`` remains the pygame tick used only in the CSV log. Deadlines use
+        time.monotonic(), so a display reinitialisation or pygame timer reset
+        cannot strand the recorder in REST.
+        """
+        if now is None:
+            now = pygame.time.get_ticks()
+        clock_now = self._clock()
+
         if self.phase == self.DONE:
-            if self.mi and now - getattr(self, "done_at", now) > 2000:
+            if (self.capture_mode and
+                    clock_now - getattr(self, "done_at", clock_now) > 2000):
                 pygame.event.post(pygame.event.Event(pygame.QUIT))
             return
 
@@ -423,7 +541,8 @@ class CuedRecorder:
             self.started = True
             self.order = self._build_order()
             self.phase = self.REST
-            self.phase_end = now + self.rest_ms
+            self.phase_end = clock_now + self.rest_ms
+            print(f"  initial rest {self.rest_ms / 1000.0:.1f}s")
             return
 
         if self.phase == self.CUE:
@@ -431,14 +550,14 @@ class CuedRecorder:
             # flash on click, which would end our cue ripple early
             if not self.target.is_flashing:
                 self.target.flash(loop=True, waves=2, pulse_hz=0.5)
-            if now >= self.phase_end:
+            if clock_now >= self.phase_end:
                 self._end_cue(now)
 
-        elif self.phase == self.REST and now >= self.phase_end:
+        elif self.phase == self.REST and clock_now >= self.phase_end:
             if self.trial >= self.n_trials:
                 self.phase = self.DONE
-                self.done_at = now
-                if self.mi:
+                self.done_at = clock_now
+                if self.capture_mode:
                     # Calibration ends itself. Leaving the window open after
                     # the last cue means the saved file depends on when
                     # somebody happens to click the X, and a session that is
@@ -485,19 +604,37 @@ class CuedRecorder:
         win.blit(bar, (0, 0))
 
         if self.phase == self.CUE:
-            msg, col = f"LOOK AT:  {self.target.name.upper()}", (250, 214, 110)
+            if self.button_mi:
+                msg = f"IMAGINE PRESSING:  {self.target.name.upper()}"
+            else:
+                msg = f"LOOK AT:  {self.target.name.upper()}"
+            col = (250, 214, 110)
         elif self.phase == self.DONE:
-            msg, col = "COMPLETE - close the window", (120, 220, 160)
+            msg, col = "COMPLETE - saving", (120, 220, 160)
         else:
             msg, col = "rest...", (170, 178, 198)
         win.blit(self.font_big.render(msg, True, col), (18, 10))
 
-        right = f"trial {min(self.trial, self.n_trials)}/{self.n_trials}"
-        r = self.font.render(right, True, (220, 226, 240))
-        win.blit(r, r.get_rect(topright=(w - 18, 16)))
+        # Never display "trial 0". Before the first cue this is preparation,
+        # not a trial; between cues report what completed and what comes next.
+        # Calling the preparation interval trial 0 made it look as though it
+        # overlapped trial 1 even though no EEG epoch is cut from that interval.
+        if self.phase == self.CUE:
+            right = f"trial {self.trial}/{self.n_trials}"
+        elif self.phase == self.DONE:
+            right = f"complete {self.n_trials}/{self.n_trials}"
+        elif self.trial == 0:
+            right = f"get ready · next 1/{self.n_trials}"
+        elif self.trial < self.n_trials:
+            right = (f"rest · done {self.trial}/{self.n_trials} · "
+                     f"next {self.trial + 1}/{self.n_trials}")
+        else:
+            right = f"rest · done {self.n_trials}/{self.n_trials}"
+        r = self.font_sm.render(right, True, (220, 226, 240))
+        win.blit(r, r.get_rect(topright=(w - 18, 18)))
 
         if self.phase in (self.CUE, self.REST) and self.started:
-            left = max(0, (self.phase_end - pygame.time.get_ticks()) / 1000.0)
+            left = max(0, (self.phase_end - self._clock()) / 1000.0)
             t = self.font_sm.render(f"{left:4.1f}s", True, (150, 158, 180))
             win.blit(t, t.get_rect(topright=(w - 18, 38)))
 
@@ -505,14 +642,20 @@ class CuedRecorder:
             hand, _ = HAND_LABELS[self.cue_hand]
             self.hint = (f"imagine PRESSING {self.target.name} "
                          f"with your {hand} hand")
-        rec = "REC" if self.bci is not None else "DRY-RUN (no EEG)"
-        reccol = (220, 90, 90) if self.bci is not None else (140, 146, 164)
+        elif self.button_mi and self.phase == self.CUE:
+            hint = (f"feel your {self.button_hand} hand reach to its screen "
+                    f"position and press - keep the real hand still")
+            hs = self.font_sm.render(hint, True, (220, 226, 240))
+            win.blit(hs, hs.get_rect(center=(w // 2, 47)))
+        rec = "REC" if self.capture is not None or self.bci is not None else "DRY-RUN (no EEG)"
+        reccol = ((220, 90, 90) if self.capture is not None or self.bci is not None
+                  else (140, 146, 164))
         win.blit(self.font_sm.render(rec, True, reccol), (18, 40))
 
         # --- progress bar ----------------------------------------------
         if self.started and self.phase != self.DONE:
             total = self.cue_ms if self.phase == self.CUE else self.rest_ms
-            left_ms = max(0, self.phase_end - pygame.time.get_ticks())
+            left_ms = max(0, self.phase_end - self._clock())
             frac = 1.0 - (left_ms / total if total else 1)
             pygame.draw.rect(win, (40, 44, 58), pygame.Rect(0, 56, w, 4))
             pygame.draw.rect(win, col, pygame.Rect(0, 56, int(w * frac), 4))
@@ -543,14 +686,25 @@ def run_example(args):
         print(f"Available: {', '.join(sorted(p.stem for p in EXAMPLE_DIR.glob('*.py') if p.stem != '__init__'))}")
         return 1
 
+    script_source = script.read_text()
+    explicit_integration = "__bci_recorder_frame__" in script_source
+
+    if args.button_mi:
+        preload_started = time.perf_counter()
+        _load_button_label_fn()
+        if args.debug_timing:
+            print(f"[REC DEBUG] preloaded button-MI label module in "
+                  f"{(time.perf_counter() - preload_started) * 1000.0:.1f}ms",
+                  flush=True)
+
     BCI = capture = None
-    if args.mi:
-        # Calibration mode owns the stream itself, through StreamBridge's
-        # BrainFlowBackend, because it must keep every sample to epoch
-        # afterwards. The LSL path used for marker-only recording hands
-        # samples onward and keeps nothing.
+    capture_mode = args.mi or args.button_mi
+    if capture_mode:
+        # Calibration modes own the stream through StreamBridge's
+        # BrainFlowBackend, because they must keep every sample to epoch
+        # afterwards. Direct-button data is saved in an isolated directory.
         if not args.subject:
-            print("--mi needs --subject")
+            print("--mi/--button-mi needs --subject")
             return 1
         if args.dry_run:
             from stream_bridge import SyntheticBackend
@@ -573,33 +727,195 @@ def run_example(args):
 
     rec = CuedRecorder(BCI, trials=args.trials, cue_s=args.cue,
                        rest_s=args.rest, script=script.stem,
-                       mi=args.mi, capture=capture)
-    if args.mi and args.cue < 3.0:
+                       mi=args.mi, button_mi=args.button_mi,
+                       button_hand=args.button_hand, capture=capture)
+    if capture_mode and args.cue < 3.0:
         print(f"  WARNING: cue {args.cue}s is shorter than the 3.0s epoch "
               f"window, so most of every epoch would be rest. Use --cue 4 "
               f"or more.")
 
     print(f"\nRunning {script.name}")
     print(f"  {args.trials} trials · {args.cue}s cue · {args.rest}s rest")
-    print("  the flashing button is your target - try to select it\n")
+    print("  recorder integration: " +
+          ("explicit app frame hook" if explicit_integration
+           else "legacy pygame fallback hooks"))
+    if args.button_mi:
+        print("  imagine the complete reach-and-press action; do NOT physically click\n")
+    else:
+        print("  the flashing button is your target - try to select it\n")
 
     namespace = {"__name__": "__main__", "__file__": str(script)}
     original_flip = pygame.display.flip
+    original_update = pygame.display.update
+    original_event_get = pygame.event.get
+    last_step_ms = [-1e18]
+    last_callback_ms = [time.monotonic() * 1000.0]
+    last_debug_ms = [-1e18]
+    callback_counts = {"explicit": 0, "flip": 0, "update": 0, "event": 0}
+    explicit_hook_used = [False]
+    buttons_prewarmed = [False]
+
+    def prewarm_first_cue(win):
+        """Pay pygame/SDL's first animated-alpha-draw cost before REST starts.
+
+        On one Windows setup the first call to Button._draw_flash() blocked the
+        render thread for ~4 seconds. The recorder clock correctly entered CUE,
+        but the user could not see those first four seconds. Rendering one
+        off-screen flash per button here moves any lazy SDL/font initialisation
+        before the timed protocol.
+        """
+        if buttons_prewarmed[0] or not rec.buttons:
+            return
+        started = time.perf_counter()
+        warm = pygame.Surface(win.get_size(), pygame.SRCALPHA)
+        for button in rec.buttons:
+            button.flash(loop=True, waves=2, pulse_hz=0.5)
+            button.draw(warm)
+            button.stop_flash()
+        rec._fonts()
+        rec.font_big.render("IMAGINE PRESSING", True, (250, 214, 110))
+        rec.font_sm.render(
+            "feel your RIGHT hand reach to its screen position and press",
+            True, (220, 226, 240))
+        buttons_prewarmed[0] = True
+        elapsed = (time.perf_counter() - started) * 1000.0
+        if args.debug_timing:
+            print(f"[REC DEBUG] prewarmed first cue draw in {elapsed:.1f}ms",
+                  flush=True)
+
+    def debug_line(source, wall_ms, force=False):
+        if not args.debug_timing:
+            return
+        if not force and wall_ms - last_debug_ms[0] < 1000.0:
+            return
+        last_debug_ms[0] = wall_ms
+        left = (max(0.0, rec.phase_end - rec._clock()) / 1000.0
+                if rec.started and rec.phase != rec.DONE else 0.0)
+        samples = capture.n_samples if capture is not None else -1
+        thread_alive = bool(capture is not None and capture._thread is not None
+                            and capture._thread.is_alive())
+        display = pygame.display.get_surface()
+        print(
+            f"[REC DEBUG] source={source:<8} phase={rec.phase:<4} "
+            f"trial={rec.trial}/{rec.n_trials} left={left:5.2f}s "
+            f"pygame_ms={pygame.time.get_ticks()} samples={samples} "
+            f"capture_thread={'alive' if thread_alive else 'n/a'} "
+            f"display={'yes' if display is not None else 'no'} "
+            f"calls={dict(callback_counts)}",
+            flush=True,
+        )
+
+    def recorder_step(draw=False, source="unknown"):
+        """Advance independently of an app's chosen display-present function.
+
+        The old recorder advanced only inside pygame.display.flip(). Apps that
+        use display.update(), or skip a presentation while resting, could leave
+        the state machine parked in REST forever. Event pumping now advances it
+        too; flip/update are both hooked for the overlay.
+        """
+        wall_ms = time.monotonic() * 1000.0
+        callback_counts[source] = callback_counts.get(source, 0) + 1
+        last_callback_ms[0] = wall_ms
+
+        win = pygame.display.get_surface()
+        if win is None:
+            debug_line(source, wall_ms)
+            return
+        if not rec.buttons:
+            rec.buttons = rec.find_buttons(namespace)
+            if rec.buttons:
+                rec._wrap_clicks()
+                print(f"  found {len(rec.buttons)} buttons: "
+                      f"{', '.join(b.name for b in rec.buttons)}\n")
+        if not rec.buttons:
+            debug_line(source, wall_ms)
+            return
+
+        prewarm_first_cue(win)
+
+        # event.get() and display.flip()/update() usually happen in the same
+        # frame. Advance at most once within 2 ms, but draw on every present.
+        update_ms = 0.0
+        if wall_ms - last_step_ms[0] >= 2.0:
+            before = (rec.phase, rec.trial)
+            update_started = time.perf_counter()
+            try:
+                rec.update(pygame.time.get_ticks())
+            except Exception:
+                if args.debug_timing:
+                    import traceback
+                    print("[REC DEBUG] exception inside rec.update():",
+                          flush=True)
+                    traceback.print_exc()
+                raise
+            update_ms = (time.perf_counter() - update_started) * 1000.0
+            last_step_ms[0] = wall_ms
+            after = (rec.phase, rec.trial)
+            if args.debug_timing and after != before:
+                print(f"[REC DEBUG] TRANSITION {before[0]} {before[1]} -> "
+                      f"{after[0]} {after[1]} at monotonic_ms={wall_ms:.0f}",
+                      flush=True)
+        draw_ms = 0.0
+        if draw:
+            draw_started = time.perf_counter()
+            rec.draw(win)
+            draw_ms = (time.perf_counter() - draw_started) * 1000.0
+        if args.debug_timing and max(update_ms, draw_ms) >= 250.0:
+            print(f"[REC DEBUG] SLOW RECORDER update={update_ms:.1f}ms "
+                  f"overlay_draw={draw_ms:.1f}ms phase={rec.phase} "
+                  f"trial={rec.trial}", flush=True)
+        debug_line(source, wall_ms)
 
     def hooked_flip(*a, **k):
-        """Runs once per frame, after the script has drawn, before presenting."""
-        win = pygame.display.get_surface()
-        if win is not None:
-            if not rec.buttons:
-                rec.buttons = rec.find_buttons(namespace)
-                if rec.buttons:
-                    rec._wrap_clicks()
-                    print(f"  found {len(rec.buttons)} buttons: "
-                          f"{', '.join(b.name for b in rec.buttons)}\n")
-            if rec.buttons:
-                rec.update(pygame.time.get_ticks())
-                rec.draw(win)
+        recorder_step(draw=not explicit_hook_used[0], source="flip")
         return original_flip(*a, **k)
+
+    def hooked_update(*a, **k):
+        recorder_step(draw=not explicit_hook_used[0], source="update")
+        return original_update(*a, **k)
+
+    def hooked_event_get(*a, **k):
+        events = original_event_get(*a, **k)
+        recorder_step(draw=False, source="event")
+        return events
+
+    def explicit_recorder_frame():
+        """Stable integration point used by the two main example apps.
+
+        Monkey-patching pygame works for legacy examples, but some pygame/SDL
+        builds cache display functions internally. The main demos call this
+        hook themselves once per frame, after drawing and before presenting.
+        """
+        explicit_hook_used[0] = True
+        recorder_step(draw=True, source="explicit")
+
+    # The executed script sees these globals without importing data_record.py.
+    namespace["__bci_recorder_frame__"] = explicit_recorder_frame
+    namespace["__bci_debug_timing__"] = bool(args.debug_timing)
+
+    debug_stop = threading.Event()
+    debug_thread = None
+
+    def debug_watchdog():
+        """Report when the app stops calling every recorder integration path."""
+        while not debug_stop.wait(1.0):
+            now_ms = time.monotonic() * 1000.0
+            silent_s = (now_ms - last_callback_ms[0]) / 1000.0
+            if silent_s >= 2.0:
+                samples = capture.n_samples if capture is not None else -1
+                thread_alive = bool(
+                    capture is not None and capture._thread is not None
+                    and capture._thread.is_alive())
+                left = (max(0.0, rec.phase_end - rec._clock()) / 1000.0
+                        if rec.started and rec.phase != rec.DONE else 0.0)
+                print(
+                    f"[REC WATCHDOG] NO FRAME CALLBACK for {silent_s:.1f}s | "
+                    f"phase={rec.phase} trial={rec.trial}/{rec.n_trials} "
+                    f"left={left:.2f}s samples={samples} "
+                    f"capture_thread={'alive' if thread_alive else 'n/a'} | "
+                    "the pygame app loop/display is stalled",
+                    flush=True,
+                )
 
     """
     Added by Anson
@@ -628,9 +944,31 @@ def run_example(args):
     os.chdir(run_dir)
 
     failed = None
+    if args.debug_timing:
+        print("[REC DEBUG] build=2026-10-13-debug-2", flush=True)
+        print(f"[REC DEBUG] python={sys.version.split()[0]} "
+              f"pygame={pygame.version.ver} platform={sys.platform}", flush=True)
+        print(f"[REC DEBUG] script={script} integration="
+              f"{'explicit' if explicit_integration else 'legacy'} "
+              f"cue={args.cue}s rest={args.rest}s trials={args.trials}",
+              flush=True)
+        print(f"[REC DEBUG] cwd={run_dir} capture_mode={capture_mode} "
+              f"dry_run={args.dry_run}", flush=True)
+        debug_thread = threading.Thread(
+            target=debug_watchdog, daemon=True, name="RecorderDebugWatchdog")
+        debug_thread.start()
+
     try:
-        pygame.display.flip = hooked_flip
-        exec(compile(script.read_text(), str(script), "exec"), namespace)
+        if not explicit_integration:
+            # Legacy examples have no recorder callback, so retain the original
+            # monkey-patch fallback. The two main demos deliberately avoid it:
+            # replacing pygame's C-backed presentation functions caused stale
+            # frames on some Windows/SDL builds (REST stayed at 0.0, then the
+            # next cue appeared several seconds late).
+            pygame.display.flip = hooked_flip
+            pygame.display.update = hooked_update
+            pygame.event.get = hooked_event_get
+        exec(compile(script_source, str(script), "exec"), namespace)
     except SystemExit:
         pass
     except FileNotFoundError as exc:
@@ -643,16 +981,29 @@ def run_example(args):
                   f"  Run data_record.py from the same folder you would run\n"
                   f"  the example from, or move assets/ next to the script.")
     except Exception as exc:
+        if args.debug_timing:
+            import traceback
+            print("[REC DEBUG] unhandled app/recorder exception:", flush=True)
+            traceback.print_exc()
         failed = f"{script.name} raised {type(exc).__name__}: {exc}"
     finally:
+        debug_stop.set()
+        if debug_thread is not None:
+            debug_thread.join(timeout=2.0)
         pygame.display.flip = original_flip
+        pygame.display.update = original_update
+        pygame.event.get = original_event_get
         os.chdir(prev_cwd)
         if failed:
             print(f"\n  SCRIPT ERROR\n  {failed}")
         path = rec.save_log()
         if path:
-            hits = sum(r["correct"] for r in rec.log)
-            print(f"\n  {hits}/{len(rec.log)} trials matched the cue")
+            if args.button_mi:
+                print(f"\n  {len(rec.log)} button-imagery trials recorded; "
+                      "mental compliance is not observable")
+            else:
+                hits = sum(r["correct"] for r in rec.log)
+                print(f"\n  {hits}/{len(rec.log)} trials matched the cue")
             print(f"  trial log -> {path}")
         if BCI is not None:
             BCI.end()
@@ -661,19 +1012,37 @@ def run_example(args):
             stream = capture.stop()
             print(f"  captured {stream.shape[1] / capture.fs:.1f}s "
                   f"({stream.shape[1]} samples)")
-            X, y, labels = epoch_from_log(stream, capture.fs, rec.log,
-                                          t0_ms=0)
+            if args.button_mi:
+                X, y, labels = epoch_button_mi_from_log(
+                    stream, capture.fs, rec.log, t0_ms=0)
+            else:
+                X, y, labels = epoch_from_log(stream, capture.fs, rec.log,
+                                              t0_ms=0)
             if len(X) == 0:
                 print("  no usable epochs - was the cue shorter than 3 s?")
             else:
-                out = Path(args.out) if args.out else (
-                    ROOT / "profiles" / args.subject.lower())
+                if args.out:
+                    out = Path(args.out)
+                elif args.button_mi:
+                    from ML.button_mi import button_profile_dir
+                    out = button_profile_dir(args.subject, script.stem)
+                else:
+                    out = ROOT / "profiles" / args.subject.lower()
                 npz = save_session(X, y, labels, args.subject, capture.fs,
                                    args.montage, out)
-                n0 = int((y == 0).sum()); n1 = int((y == 1).sum())
-                print(f"  {len(X)} epochs  (LEFT {n0} / RIGHT {n1})")
-                print(f"  calibration -> {npz}")
-                print(f"  next:  python ML/train_local.py {args.subject}")
+                if args.button_mi:
+                    counts = [(b.name, int((y == i).sum()))
+                              for i, b in enumerate(rec.buttons)]
+                    print(f"  {len(X)} direct-button epochs  (" +
+                          " / ".join(f"{name} {n}" for name, n in counts) + ")")
+                    print(f"  button calibration -> {npz}")
+                    print(f"  next:  python ML/train_button_mi.py "
+                          f"{args.subject} --app {script.stem}")
+                else:
+                    n0 = int((y == 0).sum()); n1 = int((y == 1).sum())
+                    print(f"  {len(X)} epochs  (LEFT {n0} / RIGHT {n1})")
+                    print(f"  calibration -> {npz}")
+                    print(f"  next:  python ML/train_local.py {args.subject}")
         try:
             pygame.quit()
         except Exception:
@@ -839,14 +1208,23 @@ def cli():
     ap.add_argument("--dry-run", action="store_true",
                     help="run the UI and cues without recording EEG")
     ap.add_argument("--list", action="store_true", help="list example scripts")
-    ap.add_argument("--mi", action="store_true",
-                    help="CALIBRATION mode: cue a hand per trial and write a "
-                         "calib_*.npz that ML/train_local.py can train on")
+    modes = ap.add_mutually_exclusive_group()
+    modes.add_argument("--mi", action="store_true",
+                       help="existing calibration mode: LEFT/RIGHT hand labels; "
+                            "writes data for ML/train_local.py")
+    modes.add_argument("--button-mi", action="store_true",
+                       help="experimental direct-button imagery mode; isolated "
+                            "data/model, no LEFT/RIGHT selection tree")
+    ap.add_argument("--button-hand", choices=["left", "right"], default="right",
+                    help="fixed imagined hand for --button-mi (default right)")
     ap.add_argument("--subject", default=None,
-                    help="subject name for --mi (required)")
+                    help="subject name for --mi or --button-mi (required)")
     ap.add_argument("--montage", default="cyton8_motor")
     ap.add_argument("--out", default=None,
-                    help="output dir for --mi (default profiles/<subject>)")
+                    help="output dir override; defaults keep --mi and --button-mi isolated")
+    ap.add_argument("--debug-timing", action="store_true",
+                    help="print a 1 Hz recorder heartbeat, phase transitions, "
+                         "frame-hook activity and capture-thread state")
     args = ap.parse_args()
 
     if args.list:

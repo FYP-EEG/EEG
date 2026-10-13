@@ -7,6 +7,7 @@ Edited on: 20/9/2026 - added flash() demo + func= callbacks
 
 import pygame
 import os
+import time as _time
 #import constants for easier access to key events
 from pygame.locals import *
 
@@ -93,11 +94,18 @@ one), against three for scanning.
 
     python example/rockpaperscissors.py --bci sine
     python example/rockpaperscissors.py --bci cyton --user anson --port COM4
+
+Edited by Anson
+Date: 13/10/2026
+Purpose: add the separate --bci button-mi path. Its model emits rock/paper/
+         scissors directly and bypasses the current LEFT/RIGHT selector.
+
+    python example/rockpaperscissors.py --bci button-mi --user anson --port COM4
 """
 import argparse
 
 _ap = argparse.ArgumentParser(add_help=False)
-_ap.add_argument("--bci", choices=["sine", "replay", "cyton"], default=None)
+_ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi"], default=None)
 _ap.add_argument("--user", default=None)
 _ap.add_argument("--port", default=None)
 _ap.add_argument("--recording", default=None)
@@ -123,8 +131,8 @@ if _args.bci:
 
     bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
                   serial_port=_args.port, recording=_args.recording,
-                  scheme=_args.scheme, on_select=_choose,
-                  on_change=_highlight).start()
+                  scheme=_args.scheme, app="rockpaperscissors",
+                  on_select=_choose, on_change=_highlight).start()
 
 cursor = ""
 cursorUpdate = False
@@ -150,8 +158,10 @@ Purpose: frame clock. Without it the loop free-runs at thousands of FPS and a
 2-second animation is over before you can see it.
 """
 clock = pygame.time.Clock()
+_frame_debug = bool(globals().get("__bci_debug_timing__", False))
 
 while run:
+    _frame_started = _time.perf_counter()
     """
     Edited by Anson
     Date: 20/9/2026
@@ -246,12 +256,43 @@ while run:
         big = pygame.transform.scale(selected["button"].img, (160, 160))
         win.blit(big, big.get_rect(center=(width // 2, height // 2 - 40)))
 
+    _buttons_started = _time.perf_counter()
     for button in buttons:
         button.draw(win)
+    _buttons_ms = (_time.perf_counter() - _buttons_started) * 1000.0
+
+    """
+    Edited by Anson
+    Date: 13/10/2026
+    Purpose: explicit frame hook for EEG/data_record.py.
+
+    The recorder used to depend entirely on monkey-patching display.flip(). On
+    some pygame/SDL builds that hook stopped being called after a few frames,
+    leaving the calibration at REST 0.0. The injected callback advances and
+    draws the recorder directly. It is absent during normal play, so existing
+    mouse and MI behaviour is unchanged.
+    """
+    _record_frame = globals().get("__bci_recorder_frame__")
+    _hook_started = _time.perf_counter()
+    if callable(_record_frame):
+        _record_frame()
+    _hook_ms = (_time.perf_counter() - _hook_started) * 1000.0
 
     #update full display surface to screen
+    _flip_started = _time.perf_counter()
     pygame.display.flip()
+    _flip_ms = (_time.perf_counter() - _flip_started) * 1000.0
     #cap at 60 FPS so the animation runs at a visible speed
+    _tick_started = _time.perf_counter()
     clock.tick(60)
+    _tick_ms = (_time.perf_counter() - _tick_started) * 1000.0
+
+    if _frame_debug:
+        _frame_ms = (_time.perf_counter() - _frame_started) * 1000.0
+        if max(_buttons_ms, _hook_ms, _flip_ms, _tick_ms) >= 250.0:
+            print(f"[FRAME DEBUG] total={_frame_ms:.1f}ms "
+                  f"buttons={_buttons_ms:.1f}ms recorder={_hook_ms:.1f}ms "
+                  f"flip={_flip_ms:.1f}ms tick={_tick_ms:.1f}ms",
+                  flush=True)
 
 pygame.quit()
