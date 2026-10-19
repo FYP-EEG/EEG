@@ -83,3 +83,85 @@ class DirectButtonSelector:
 
     def __repr__(self):
         return f"<DirectButtonSelector {self.names!r}>"
+
+
+class IntentActionSelector:
+    """Map reusable motor-intent outputs to developer-owned UI actions.
+
+    ``intent_map`` is action-name -> motor-intent. The model emits the intent;
+    this selector performs the final application mapping. It accepts one or more
+    targets, unlike SelectionTree, because a one-command app is a valid use case
+    when its model was calibrated against idle.
+    """
+
+    def __init__(self, targets, intent_map, on_select=None, on_change=None,
+                 auto_fire=True):
+        from ML.motor_intent import MotorIntentMap
+
+        self.targets = list(targets)
+        self.intent_map = (intent_map if isinstance(intent_map, MotorIntentMap)
+                           else MotorIntentMap(intent_map))
+        self.on_select = on_select
+        self.on_change = on_change
+        self.auto_fire = bool(auto_fire)
+        by_action = {}
+        for target in self.targets:
+            name = button_name(target)
+            if name in by_action:
+                raise ValueError(f"action target names must be unique: {name!r}")
+            by_action[name] = target
+        missing = set(self.intent_map.action_to_intent) - set(by_action)
+        if missing:
+            raise ValueError(
+                f"intent map references missing application actions: "
+                f"{sorted(missing)!r}")
+        self._by_intent = {
+            intent: by_action[action]
+            for action, intent in self.intent_map.action_to_intent.items()
+        }
+        self.stats = {"decisions": 0, "selections": 0, "resets": 0}
+
+    @property
+    def names(self):
+        return list(self._by_intent)
+
+    @property
+    def candidates(self):
+        return list(range(len(self._by_intent)))
+
+    def candidate_buttons(self):
+        return list(self._by_intent.values())
+
+    def reset(self):
+        self.stats["resets"] += 1
+        if self.on_change:
+            self.on_change(self.candidate_buttons())
+        return self.candidates
+
+    def decide(self, command):
+        self.stats["decisions"] += 1
+        if command not in self._by_intent:
+            raise ValueError(
+                f"model predicted intent {command!r}, but this application "
+                f"mapped {sorted(self._by_intent)!r}")
+        target = self._by_intent[command]
+        self.stats["selections"] += 1
+        if self.auto_fire:
+            for attr in ("trigger", "select", "on_click"):
+                callback = getattr(target, attr, None)
+                if callable(callback):
+                    callback()
+                    break
+            else:
+                if callable(target):
+                    target()
+        if self.on_select:
+            self.on_select(target)
+        return target
+
+    def __len__(self):
+        return len(self._by_intent)
+
+    def __repr__(self):
+        return (f"<IntentActionSelector {len(self)} actions "
+                f"task_set={self.intent_map.task_set!r}>")

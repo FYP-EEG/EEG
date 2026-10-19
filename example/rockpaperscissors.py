@@ -83,6 +83,14 @@ scissors = Button(2, "scissors", size, (center_x + spacing, center_y),
 
 buttons = [rock, paper, scissors]
 
+# Reusable physical-intention labels. EEG is trained on these labels; Rock,
+# Paper and Scissors are only developer-owned callbacks and can be remapped.
+BCI_INTENT_MAP = {
+    "rock": "left_index",
+    "paper": "right_index",
+    "scissors": "right_pinky",
+}
+
 """
 Edited by Anson
 Date: 6/10/2026
@@ -101,16 +109,33 @@ Purpose: add the separate --bci button-mi path. Its model emits rock/paper/
          scissors directly and bypasses the current LEFT/RIGHT selector.
 
     python example/rockpaperscissors.py --bci button-mi --user anson --port COM4
+
+Edited by Anson
+Date: 19/10/2026
+Purpose: recommended reusable finger-MI mapping. Defaults are LEFT INDEX=rock,
+RIGHT INDEX=paper and RIGHT PINKY=scissors. Developers can override with
+--intent-map; adjacent-finger warnings come from the SDK.
+
+    python example/rockpaperscissors.py --bci intent-mi --user anson --port COM4
 """
 import argparse
 
 _ap = argparse.ArgumentParser(add_help=False)
-_ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi"], default=None)
+_ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi",
+                                    "intent-mi"], default=None)
 _ap.add_argument("--user", default=None)
 _ap.add_argument("--port", default=None)
 _ap.add_argument("--recording", default=None)
 _ap.add_argument("--scheme", choices=["tree", "scan"], default="tree")
+_ap.add_argument("--intent-map", "--finger-map", dest="intent_map", default=None,
+                 help="action=intent pairs, e.g. "
+                      "rock=left_index,paper=right_index,scissors=right_pinky")
 _args, _ = _ap.parse_known_args()
+
+if _args.intent_map:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from ML.motor_intent import parse_intent_map
+    BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
 
 bci = None
 if _args.bci:
@@ -132,6 +157,7 @@ if _args.bci:
     bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
                   serial_port=_args.port, recording=_args.recording,
                   scheme=_args.scheme, app="rockpaperscissors",
+                  intent_map=BCI_INTENT_MAP,
                   on_select=_choose, on_change=_highlight).start()
 
 cursor = ""

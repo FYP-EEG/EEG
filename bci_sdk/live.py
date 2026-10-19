@@ -22,9 +22,12 @@ WHAT "source" MEANS
   replay   a recorded .npz played back at wall-clock rate
   cyton    the real board, with this user's existing LEFT/RIGHT model
   button-mi
-           the real board, with an experimental app-specific model that emits
-           a button name directly. It uses DirectButtonSelector and never enters
-           the LEFT/RIGHT tree/scan path.
+           legacy experimental app-specific model that emits a button name.
+  intent-mi
+           recommended reusable model. It emits a physical motor intention
+           (right_index, left_hand, both_feet, ...) and maps that intention to
+           the developer's application action. The task-set model can be reused
+           by other apps with a different action mapping.
 
   THE SINE PROVES THE PLUMBING, MOTOR IMAGERY PROVES THE CLASSIFIER.
   A pure sine contains no event-related desynchronisation, so feeding it to a
@@ -56,7 +59,8 @@ for _sub in ("", "EEG"):
         sys.path.insert(0, _p)
 
 from bci_sdk.selection import SelectionTree, LEFT, RIGHT       # noqa: E402
-from bci_sdk.direct import DirectButtonSelector                 # noqa: E402
+from bci_sdk.direct import (DirectButtonSelector,               # noqa: E402
+                            IntentActionSelector)
 from bci_sdk.runtime import RealtimeDecider, ArtifactDetector  # noqa: E402
 
 NO_ACTION = -1
@@ -251,7 +255,7 @@ class LiveBCI:
                  serial_port=None, recording=None, sample_freq=250,
                  window=750, hop=250, on_select=None, on_change=None,
                  freq_map=None, probe_channels=(1, 2), verbose=True,
-                 app=None, model_root=None, **decider_kw):
+                 app=None, model_root=None, intent_map=None, **decider_kw):
         self.verbose = verbose
         self.source = source
         self.sample_freq = sample_freq
@@ -267,6 +271,16 @@ class LiveBCI:
             if not user or not app:
                 raise ValueError("source='button-mi' requires user= and app=")
             self.model = ButtonMIModel.load(user, app, root=model_root)
+            artifact_uv = 100.0
+        elif source == "intent-mi":
+            from ML.motor_intent import MotorIntentMap, MotorIntentModel
+            if not user or intent_map is None:
+                raise ValueError(
+                    "source='intent-mi' requires user= and intent_map=")
+            self.intent_map = (intent_map if isinstance(intent_map, MotorIntentMap)
+                               else MotorIntentMap(intent_map))
+            self.model = MotorIntentModel.load(
+                user, self.intent_map.intents, root=model_root)
             artifact_uv = 100.0
         else:
             from ML.local_model import LocalMIModel
@@ -287,6 +301,18 @@ class LiveBCI:
                     f"button-MI model expects buttons {sorted(missing)!r}, but "
                     f"this UI exposes {sorted(self.selector.names)!r}")
             active_scheme = "direct"
+        elif source == "intent-mi":
+            self.selector = IntentActionSelector(
+                buttons, self.intent_map, on_select=on_select,
+                on_change=on_change)
+            active_scheme = "motor-intent"
+            if self.verbose:
+                report = self.intent_map.report()
+                print(f"[MotorIntentMap] actions={report['count']} "
+                      f"difficulty={report['difficulty']} "
+                      f"task_set={report['task_set']}")
+                for warning in report["warnings"]:
+                    print(f"  WARNING: {warning}")
         else:
             sel = SelectionTree if scheme == "tree" else ScanSelector
             self.selector = sel(buttons, on_select=on_select, on_change=on_change)
@@ -310,7 +336,8 @@ class LiveBCI:
         if source in ("sine", "synthetic"):
             backend = BrainFlowBackend(board_id=-1, serial_port="",
                                        n_channels=8)
-        elif source == "replay" or (source == "button-mi" and recording):
+        elif source == "replay" or (source in ("button-mi", "intent-mi")
+                                    and recording):
             backend = ReplayBackend(recording, loop=True, hop=hop)
         else:
             backend = BrainFlowBackend(board_id=0, serial_port=serial_port,

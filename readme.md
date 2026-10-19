@@ -161,6 +161,29 @@ Arrow keys work throughout, so the whole system is drivable with no hardware.
 
 ## Using the library
 
+### Reusable motor-intent mapping (v0.10)
+
+A classifier predicts a physical intention; the developer maps it to any action:
+
+```python
+mapping = bci_sdk.MotorIntentMap({
+    "rock": bci_sdk.MotorIntent.LEFT_INDEX,
+    "paper": bci_sdk.MotorIntent.RIGHT_INDEX,
+    "scissors": bci_sdk.MotorIntent.RIGHT_PINKY,
+})
+
+bci = bci_sdk.LiveBCI(
+    buttons, source="intent-mi", user="anson", serial_port="COM4",
+    intent_map=mapping, on_select=lambda button: button.click(),
+).start()
+```
+
+The same trained intention set can be remapped to another application's callbacks
+without retraining. Adding an intention creates a new calibration task set. The SDK
+accepts one to ten finger labels but warns about adjacent fingers, high class counts and
+research-only 6–10-finger profiles. Software scalability is not a claim of equal EEG
+accuracy. See `docs/MOTOR_INTENT_SDK.md` for recording, training and demo commands.
+
 ### `BCISession` — the acquisition + decoding pipeline
 
 ```python
@@ -349,4 +372,4 @@ See `docs/HARDWARE_CYTON_HEADBAND.md`.
 
 ## Authors
 
-Anson Li · Brian Chan— Final Year Project
+Anson Li · Brian — Final Year Project

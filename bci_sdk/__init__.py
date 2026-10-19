@@ -48,7 +48,7 @@ for _p in (str(_ROOT), str(_ROOT / "pygame_lib"), str(_ROOT / "EEG")):
     if _p not in _sys.path:
         _sys.path.insert(0, _p)
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 # ----------------------------------------------------------------- core (always)
 from ML.bci_engine import BCIEngine                                    # noqa: E402
@@ -86,8 +86,11 @@ __all__ = [
     "StreamBridge", "RingBuffer", "SyntheticBackend", "ReplayBackend",
     "BrainFlowBackend",
     # local model serving + real-time decision (no network, no server)
-    "LocalMIModel", "ButtonMIModel", "SelectionTree", "DirectButtonSelector",
-    "RealtimeDecider", "ArtifactDetector", "build_runtime", "LEFT", "RIGHT",
+    "LocalMIModel", "ButtonMIModel", "MotorIntentModel", "MotorIntent",
+    "MotorIntentMap", "FINGER_INTENTS", "BODY_INTENTS", "assess_intent_set",
+    "parse_intent_map", "SelectionTree", "DirectButtonSelector",
+    "IntentActionSelector", "RealtimeDecider", "ArtifactDetector",
+    "build_runtime", "LEFT", "RIGHT",
     # live app integration
     "LiveBCI", "ScanSelector", "SineProbe", "SineProbeModel",
     # errors
@@ -99,8 +102,12 @@ __all__ = [
 # file on disk and the decision path is pure numpy/scipy.
 from ML.local_model import LocalMIModel                      # noqa: E402
 from ML.button_mi import ButtonMIModel                        # noqa: E402
+from ML.motor_intent import (MotorIntentModel, MotorIntent,   # noqa: E402
+                             MotorIntentMap, FINGER_INTENTS, BODY_INTENTS,
+                             assess_intent_set, parse_intent_map)
 from bci_sdk.selection import SelectionTree, LEFT, RIGHT     # noqa: E402
-from bci_sdk.direct import DirectButtonSelector               # noqa: E402
+from bci_sdk.direct import (DirectButtonSelector,             # noqa: E402
+                            IntentActionSelector)
 from bci_sdk.runtime import (RealtimeDecider, ArtifactDetector,  # noqa: E402
                              build_runtime)
 from bci_sdk.live import (LiveBCI, ScanSelector, SineProbe,     # noqa: E402

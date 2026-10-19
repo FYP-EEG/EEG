@@ -117,11 +117,11 @@ Each entry is (id, name, icon file, x, y) where x and y are FRACTIONS of the
 window, so the layout survives a resize. Edit these to move buttons around.
 """
 LAYOUT = [
-    (0, "inventory", "inventory.png", 0.08, 0.88),
-    (1, "message",   "message.png",   0.28, 0.88),
-    (2, "shoot",     "shoot.png",     0.50, 0.88),
-    (3, "reload",    "reload.png",    0.72, 0.88),
-    (4, "map",       "map.png",       0.92, 0.88),
+    (0, "inventory", "inventory.png", 0.08, 0.4),
+    (1, "message",   "message.png",   0.08, 0.88),
+    (2, "shoot",     "shoot.png",     0.75, 0.7),
+    (3, "reload",    "reload.png",    0.9, 0.4),
+    (4, "map",       "map.png",       0.08, 0.15),
 ]
 
 def build_buttons():
@@ -138,6 +138,16 @@ def build_buttons():
 
 inventory, message, shoot, reload, map = build_buttons()
 buttons = [inventory, message, shoot, reload, map]
+
+# Spread five actions across both hemispheres. The SDK warns that right_thumb
+# and right_index are adjacent and that five-finger MI is an advanced task.
+BCI_INTENT_MAP = {
+    "inventory": "left_thumb",
+    "message": "left_pinky",
+    "shoot": "right_index",
+    "reload": "right_pinky",
+    "map": "right_thumb",
+}
 
 def relayout():
     """Reposition + resize every button after the window changes."""
@@ -197,18 +207,32 @@ Purpose: add isolated direct-button MI. This emits inventory/message/shoot/
          reload/map directly and does not change the scan/tree implementation.
 
     python example/realistic_ui.py --bci button-mi --user anson --port COM4
+
+Edited by Anson
+Date: 19/10/2026
+Purpose: reusable five-action finger-MI profile, spread across both hands. The
+SDK reports class-count and adjacent-finger accuracy warnings at startup.
+
+    python example/realistic_ui.py --bci intent-mi --user anson --port COM4
 """
 import argparse
 import sys as _sys
 from pathlib import Path as _Path
 
 _ap = argparse.ArgumentParser(add_help=False)
-_ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi"], default=None)
+_ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi",
+                                    "intent-mi"], default=None)
 _ap.add_argument("--user", default=None)
 _ap.add_argument("--port", default=None)
 _ap.add_argument("--recording", default=None)
 _ap.add_argument("--scheme", choices=["tree", "scan"], default="scan")
+_ap.add_argument("--intent-map", "--finger-map", dest="intent_map", default=None)
 _args, _ = _ap.parse_known_args()
+
+if _args.intent_map:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+    from ML.motor_intent import parse_intent_map
+    BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
 
 bci = None
 if _args.bci:
@@ -229,8 +253,9 @@ if _args.bci:
     bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
                   serial_port=_args.port, recording=_args.recording,
                   scheme=_args.scheme, app="realistic_ui",
+                  intent_map=BCI_INTENT_MAP,
                   on_select=_choose, on_change=_highlight).start()
-    if _args.bci == "button-mi":
+    if _args.bci in ("button-mi", "intent-mi"):
         # Direct mode has no scan cursor; all buttons are always candidates.
         for _button in buttons:
             _button.stop_flash()
@@ -386,6 +411,9 @@ while run:
     hint_font = pygame.font.SysFont("dejavusans,arial", 15)
     if _args.bci == "button-mi":
         hint_text = "imagine reaching to and pressing the intended button - keep still"
+    elif _args.bci == "intent-mi":
+        hint_text = ("finger MI: L thumb=inventory · L pinky=message · "
+                     "R index=shoot · R pinky=reload · R thumb=map")
     else:
         hint_text = (f"imagine LEFT hand = next   |   imagine RIGHT hand = select   "
                      f"|   now on: {buttons[highlight].name}")

@@ -716,7 +716,8 @@ def layer3():
           parse_button_label(button_labels[2]) == (2, "scissors"))
 
     from EEG.data_record import (CuedRecorder, epoch_from_log,
-                                 epoch_button_mi_from_log)
+                                 epoch_button_mi_from_log,
+                                 epoch_intent_mi_from_log)
     probe_stream = np.zeros((8, 1200))
     direct_log = [{"label": button_labels[1], "button_index": 1,
                    "cue_sample": 20, "cue_start_ms": 0}]
@@ -727,6 +728,12 @@ def layer3():
           bl.tolist() == [button_labels[1]])
     check("existing LEFT/RIGHT epocher ignores direct-button labels",
           len(hX) == len(hy) == len(hl) == 0)
+    intent_log = [{"label": "intent::right_index", "class_index": 1,
+                   "cue_sample": 20, "cue_start_ms": 0}]
+    iX, iy2, il2 = epoch_intent_mi_from_log(probe_stream, 250, intent_log, 0)
+    check("reusable intent epocher writes physical labels, not button names",
+          iX.shape == (1, 8, 750) and iy2.tolist() == [1] and
+          il2.tolist() == ["intent::right_index"])
 
     class RecorderClock:
         def __init__(self): self.now = 0.0
@@ -792,6 +799,72 @@ def layer3():
               command in {"rock", "paper", "scissors"} and button_conf > 0)
         check("button model records app-specific three-class chance",
               abs(button_model.describe()["chance_accuracy"] - 1/3) < 1e-12)
+
+    print("\n== Reusable scalable motor-intent profiles ==")
+    from ML.motor_intent import (MotorIntentMap, MotorIntentModel,
+        FINGER_INTENTS, assess_intent_set, intent_profile_dir,
+        make_intent_label, parse_intent_map, task_set_key)
+    from ML.train_intent_mi import train_intent_user
+
+    default_map = MotorIntentMap({
+        "rock": "left_index", "paper": "right_index",
+        "scissors": "right_pinky"})
+    check("RPS default maps actions to physical finger labels",
+          default_map.intents == ("left_index", "right_index", "right_pinky"))
+    check("task-set key is mapping-order independent",
+          task_set_key(default_map.intents) ==
+          task_set_key(reversed(default_map.intents)))
+    parsed_map = parse_intent_map(
+        "rock=left_index,paper=right_index,scissors=right_pinky")
+    check("CLI action=intent mapping parses",
+          parsed_map == default_map.action_to_intent)
+    adjacent = assess_intent_set(
+        ["right_thumb", "right_index", "left_pinky"])
+    check("adjacent fingers produce an accuracy warning",
+          adjacent["adjacent_pairs"] == [("right_thumb", "right_index")] and
+          any("adjacent" in w for w in adjacent["warnings"]))
+    ten = assess_intent_set(FINGER_INTENTS)
+    check("all ten fingers are accepted but marked research-only",
+          ten["count"] == 10 and ten["difficulty"] == "RESEARCH_ONLY" and
+          len(ten["warnings"]) >= 2)
+
+    with tempfile.TemporaryDirectory() as intent_tmp_text:
+        intent_root = Path(intent_tmp_text)
+        intentions = default_map.intents
+        intent_dir = intent_profile_dir("demo", intentions, root=intent_root)
+        intent_dir.mkdir(parents=True)
+        irng = np.random.default_rng(321)
+        intent_labels = [make_intent_label(v) for v in intentions]
+        for session in range(3):
+            ix, iy, il = [], [], []
+            for cls in range(3):
+                for _ in range(10):
+                    epoch = irng.normal(0, 5.0, (8, 750))
+                    epoch[2 + cls] *= 0.15
+                    ix.append(epoch); iy.append(cls); il.append(intent_labels[cls])
+            order = irng.permutation(len(iy))
+            np.savez_compressed(
+                intent_dir / f"calib_demo_session{session}.npz",
+                X=np.asarray(ix)[order], y=np.asarray(iy)[order],
+                labels=np.asarray(il)[order], fs=250,
+                montage="cyton8_motor")
+        intent_result = train_intent_user(
+            "demo", intentions, root=intent_root, n_splits=3,
+            screen=False, verbose=False)
+        check("task-set trainer writes reusable intent_model.joblib",
+              intent_result is not None and
+              (intent_dir / "intent_model.joblib").exists())
+        check("reusable profile is not stored under an app name",
+              "rockpaperscissors" not in str(intent_result["path"]))
+        check("session-held-out intent model exceeds synthetic chance",
+              intent_result["accuracy"] is not None and
+              intent_result["accuracy"] > .70)
+        intent_model = MotorIntentModel.load(
+            "demo", reversed(intentions), root=intent_root,
+            confidence_threshold=0.0)
+        predicted, predicted_conf = intent_model.predict_command(np.asarray(ix)[0])
+        check("loaded reusable model emits a physical intention",
+              predicted in set(intentions) and predicted_conf > 0)
 
     layer_total('LAYER 3 - OFFLINE MODEL')
 
@@ -911,7 +984,8 @@ def layer4():
 
 
     from bci_sdk.selection import SelectionTree, LEFT, RIGHT          # noqa: E402
-    from bci_sdk.direct import DirectButtonSelector                    # noqa: E402
+    from bci_sdk.direct import (DirectButtonSelector,                  # noqa: E402
+                                IntentActionSelector)
     from bci_sdk.runtime import (RealtimeDecider, ArtifactDetector,    # noqa: E402
                                  BLINK, LOCKOUT, BUILDING, REFRACTORY,
                                  REJECTED, DISPATCHED)
@@ -1032,6 +1106,24 @@ def layer4():
         check(False, "unknown direct-button output fails loudly")
     except ValueError:
         check(True, "unknown direct-button output fails loudly")
+
+    print("\n2c. Reusable motor intentions map to developer actions")
+    intent_buttons = [Btn("rock"), Btn("paper"), Btn("scissors")]
+    intent_picks = []
+    intent_selector = IntentActionSelector(
+        intent_buttons,
+        {"rock": "left_index", "paper": "right_index",
+         "scissors": "right_pinky"},
+        on_select=lambda b: intent_picks.append(b.name))
+    intent_decider = RealtimeDecider(
+        FakeModel([("right_pinky", .96)] * 3), intent_selector,
+        clock=Clock(), debounce_window=3, refractory_ms=0)
+    intent_results = [intent_decider.step(np.zeros((8, 750))) for _ in range(3)]
+    check(intent_results[-1]["selected"] is intent_buttons[2],
+          "right_pinky selects developer action Scissors directly")
+    check(intent_picks == ["scissors"] and
+          [b.fired for b in intent_buttons] == [0, 0, 1],
+          "intent mapping fires exactly one configured action")
 
     # =====================================================================
     print("\n3. Gates: consecutive agreement")
