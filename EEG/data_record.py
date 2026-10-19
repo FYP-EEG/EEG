@@ -18,6 +18,11 @@ Date: 13/10/2026
 Purpose: prevent intermittent REST stalls by using a monotonic phase clock and
          advancing from event.get(), display.flip(), or display.update().
 
+Edited by Anson
+Date: 19/10/2026
+Purpose: add reusable --intent-mi labels, task-set profiles, developer action
+         mappings, optional idle trials and generic non-button action targets.
+
 MODES
 -----
 1. Character mode (original, unchanged) - flashes typed/random characters:
@@ -32,9 +37,13 @@ MODES
 3. Existing LEFT/RIGHT MI calibration (unchanged):
        py EEG/data_record.py --file rockpaperscissors --mi --subject anson
 
-4. Experimental direct-button MI calibration (separate files/model):
+4. Legacy direct-button MI calibration (separate files/model):
        py EEG/data_record.py --file rockpaperscissors --button-mi \
             --button-hand right --subject anson --trials 90 --cue 4
+
+5. Recommended reusable motor-intent calibration:
+       py EEG/data_record.py --file rockpaperscissors --intent-mi \
+            --subject anson --trials 90 --idle-trials 15 --cue 4
 
 WHY CUED RECORDING
 ------------------
@@ -55,7 +64,8 @@ one just runs it. Instead of rewriting every example, this hooks
 inside a namespace we own. From the hook we can reach the script's Button objects,
 drive the cue, and draw an overlay on top of whatever it rendered.
 
-Zero changes required in the example scripts.
+Legacy examples need no changes because pygame hooks remain available. The main
+demos expose an explicit __bci_recorder_frame__ callback for more reliable timing.
 """
 
 import argparse
@@ -108,8 +118,8 @@ def _load_bci():
 #       labels          "target_0" | "target_1" | "idle" | "artifact"
 #       fs, montage, channel_labels, subject, created, target_freqs
 #
-# TWO ISOLATED MI LABEL CONTRACTS
-# -------------------------------
+# THREE ISOLATED MI LABEL CONTRACTS
+# ---------------------------------
 # --mi is the established path. Its classes remain target_0/target_1 =
 # LEFT/RIGHT hand, and buttons are reached through the existing selector.
 # Nothing in the experimental mode below changes that contract.
@@ -123,10 +133,27 @@ def _load_bci():
 #
 # Direct-button recordings are isolated under
 # profiles/<user>/button_mi/<app>/ and are trained by ML/train_button_mi.py.
-# ML/train_local.py never sees them. Feet are not used in either mode.
+#
+# --intent-mi is the recommended scalable contract. It stores physical labels
+# such as intent::left_index or intent::both_feet independently of Rock, jump,
+# inventory, or any other app action. Recordings/models are keyed by user and
+# task set under profiles/<user>/motor_intent/, so developers can remap a
+# trained task set to new callbacks without retraining.
+#
+# ML/train_local.py never sees either experimental data directory.
 
 
 _BUTTON_LABEL_FN = None
+_MOTOR_INTENT_API = None
+
+
+def _load_motor_intent_api():
+    """Preload reusable intent helpers before any timed cue begins."""
+    global _MOTOR_INTENT_API
+    if _MOTOR_INTENT_API is None:
+        from ML import motor_intent
+        _MOTOR_INTENT_API = motor_intent
+    return _MOTOR_INTENT_API
 
 
 def _load_button_label_fn():
@@ -205,6 +232,29 @@ def epoch_button_mi_from_log(stream, fs, log, t0_ms, window_s=3.0):
             continue
         X.append(stream[:, start:start + n])
         y.append(int(row["button_index"]))
+        labels.append(label)
+    return np.asarray(X), np.asarray(y), np.asarray(labels)
+
+
+def epoch_intent_mi_from_log(stream, fs, log, t0_ms, window_s=3.0):
+    """Cut reusable motor-intent trials without accepting other MI labels."""
+    api = _load_motor_intent_api()
+    stream = np.asarray(stream, dtype=np.float64)
+    n = int(window_s * fs)
+    X, y, labels = [], [], []
+    for row in log:
+        label = str(row.get("label", ""))
+        if not label.startswith(api.INTENT_LABEL_PREFIX):
+            continue
+        api.parse_intent_label(label)
+        if row.get("cue_sample") is not None:
+            start = int(row["cue_sample"])
+        else:
+            start = int((row["cue_start_ms"] - t0_ms) / 1000.0 * fs)
+        if start < 0 or start + n > stream.shape[1]:
+            continue
+        X.append(stream[:, start:start + n])
+        y.append(int(row["class_index"]))
         labels.append(label)
     return np.asarray(X), np.asarray(y), np.asarray(labels)
 
@@ -317,14 +367,19 @@ class CuedRecorder:
     DONE = "DONE"
 
     def __init__(self, bci, trials=10, cue_s=5.0, rest_s=2.0, script="app",
-                 mi=False, button_mi=False, button_hand="RIGHT", capture=None,
+                 mi=False, button_mi=False, intent_mi=False, intent_map=None,
+                 idle_trials=0, button_hand="RIGHT", capture=None,
                  anchors=None, clock=None):
         """
         :param mi: established calibration mode; labels LEFT/RIGHT hand only.
-        :param button_mi: isolated experiment; labels the spatially distinct
-            reach-and-press action for each actual app button.
-        :param button_hand: one fixed hand used for every direct-button trial,
-            so the class is the target movement rather than LEFT versus RIGHT.
+        :param button_mi: legacy isolated experiment with button-name labels.
+        :param intent_mi: recommended reusable mode; labels physical intentions
+            independently of application action names.
+        :param intent_map: action-name -> motor-intent mapping. It can be set
+            after the app exposes BCI_INTENT_MAP.
+        :param idle_trials: explicit no-movement trials. Required when only one
+            motor intention is trained and recommended for false-positive data.
+        :param button_hand: fixed hand for the legacy direct-button experiment.
         :param capture: SessionCapture, so each cue can record the sample index
             it began at and the stream can be epoched exactly afterwards.
         :param anchors: (left_button, right_button) for the existing --mi mode.
@@ -333,18 +388,26 @@ class CuedRecorder:
             counter can restart when an app reinitialises pygame/display, which
             previously left REST waiting for an obsolete deadline.
         """
-        if mi and button_mi:
-            raise ValueError("--mi and --button-mi are separate modes")
+        if sum(bool(v) for v in (mi, button_mi, intent_mi)) > 1:
+            raise ValueError("--mi, --button-mi and --intent-mi are separate modes")
         self.mi = bool(mi)
         self.button_mi = bool(button_mi)
-        self.capture_mode = self.mi or self.button_mi
+        self.intent_mi = bool(intent_mi)
+        self.capture_mode = self.mi or self.button_mi or self.intent_mi
         self.button_hand = str(button_hand).upper()
         self.capture = capture
         self.anchors = anchors
         self.hand_order = []
+        self.action_trials = int(trials)
+        self.idle_trials = int(idle_trials) if self.intent_mi else 0
+        self.intent_map = None
+        self.intent_values = ()
+        self.intent_class = {}
+        if intent_map is not None:
+            self.set_intent_map(intent_map)
         self._clock = clock or (lambda: time.monotonic() * 1000.0)
         self.bci = bci                    # None in --dry-run
-        self.n_trials = trials
+        self.n_trials = self.action_trials + self.idle_trials
         self.cue_ms = int(cue_s * 1000)
         self.rest_ms = int(rest_s * 1000)
         self.script = script
@@ -367,16 +430,46 @@ class CuedRecorder:
         self.font = None
         self.font_sm = None
 
+    def set_intent_map(self, mapping):
+        api = _load_motor_intent_api()
+        parsed = api.parse_intent_map(mapping)
+        self.intent_map = parsed
+        self.intent_values = api.canonical_intents(parsed.values())
+        classes = list(self.intent_values)
+        if self.idle_trials:
+            classes.append(api.IDLE)
+        self.intent_class = {name: i for i, name in enumerate(classes)}
+        assessment = api.assess_intent_set(self.intent_values)
+        print(f"  motor-intent task set: {', '.join(self.intent_values)}")
+        print(f"  difficulty: {assessment['difficulty']} · "
+              f"profile {assessment['task_set']}")
+        for warning in assessment["warnings"]:
+            print(f"  WARNING: {warning}")
+        if len(self.intent_values) == 1 and not self.idle_trials:
+            raise ValueError(
+                "one-intent recording requires --idle-trials 10 or more")
+        return parsed
+
     # ---------------------------------------------------------- discovery
     def find_buttons(self, namespace):
-        """Pull Button instances out of the running script's globals."""
-        from Button import Button
-        found, seen = [], set()
-        for value in namespace.values():
-            if isinstance(value, Button) and id(value) not in seen:
-                seen.add(id(value))
-                found.append(value)
-        # stable left-to-right order so trial labels mean something
+        """Find pygame Buttons or explicit BCI_RECORD_TARGETS action tiles."""
+        provided = namespace.get("BCI_RECORD_TARGETS")
+        if provided:
+            found = list(provided)
+            required = ("name", "id", "rect", "flash", "stop_flash")
+            for target in found:
+                missing = [a for a in required if not hasattr(target, a)]
+                if missing:
+                    raise ValueError(
+                        f"BCI_RECORD_TARGETS item {target!r} lacks {missing}")
+        else:
+            from Button import Button
+            found, seen = [], set()
+            for value in namespace.values():
+                if isinstance(value, Button) and id(value) not in seen:
+                    seen.add(id(value))
+                    found.append(value)
+        # Stable screen order for logging and balanced cue construction.
         found.sort(key=lambda b: (b.rect.centerx, b.rect.centery))
         return found
 
@@ -438,6 +531,25 @@ class CuedRecorder:
             names = [str(b.name) for b in self.buttons]
             if len(names) != len(set(names)):
                 raise ValueError("--button-mi requires unique Button.name values")
+        if self.intent_mi:
+            if not self.intent_map:
+                raise ValueError(
+                    "--intent-mi needs BCI_INTENT_MAP in the example or "
+                    "--intent-map action=intent,...")
+            by_name = {str(b.name): b for b in self.buttons}
+            missing = set(self.intent_map) - set(by_name)
+            if missing:
+                raise ValueError(
+                    f"intent map references missing actions: {sorted(missing)}")
+            action_targets = [by_name[name] for name in self.intent_map]
+            order = []
+            while len(order) < self.action_trials:
+                batch = list(action_targets)
+                random.shuffle(batch)
+                order.extend(batch)
+            order = order[:self.action_trials] + [None] * self.idle_trials
+            random.shuffle(order)
+            return order
         order = []
         while len(order) < self.n_trials:
             batch = list(self.buttons)
@@ -455,8 +567,9 @@ class CuedRecorder:
 
         for b in self.buttons:
             b.stop_flash()
-        # loop=True so the ripple runs for the whole cue, however long it is
-        self.target.flash(loop=True, waves=2, pulse_hz=0.5)
+        # None is an explicit idle/no-movement class in reusable intent mode.
+        if self.target is not None:
+            self.target.flash(loop=True, waves=2, pulse_hz=0.5)
 
         self.cue_sample = (self.capture.n_samples
                            if self.capture is not None else None)
@@ -472,6 +585,16 @@ class CuedRecorder:
             print(f"  trial {self.trial}/{self.n_trials}: imagine REACHING to "
                   f"and PRESSING '{self.target.name}' with your "
                   f"{self.button_hand} hand - do not move")
+        elif self.intent_mi:
+            api = _load_motor_intent_api()
+            self.cue_hand = None
+            self.cue_intent = (api.IDLE if self.target is None
+                               else self.intent_map[self.target.name])
+            label = api.make_intent_label(self.cue_intent)
+            self._marker(label, "start")
+            action = None if self.target is None else self.target.name
+            instruction = api.intent_instruction(self.cue_intent, action)
+            print(f"  trial {self.trial}/{self.n_trials}: {instruction}")
         else:
             self.cue_hand = None
             self._marker(self.target.name, "start")
@@ -479,29 +602,35 @@ class CuedRecorder:
                   f"LOOK AT '{self.target.name}'")
 
     def _end_cue(self, now):
-        marker_name = (self._button_label(self.target)
-                       if self.button_mi else self.target.name)
+        if self.intent_mi:
+            api = _load_motor_intent_api()
+            marker_name = api.make_intent_label(self.cue_intent)
+        elif self.button_mi:
+            marker_name = self._button_label(self.target)
+        else:
+            marker_name = self.target.name
         self._marker(marker_name, "end")
-        self.target.stop_flash()
+        if self.target is not None:
+            self.target.stop_flash()
 
         hit = self.trial_click
         ok = hit is self.target
-        if self.button_mi:
-            # Mental compliance is not observable. Asking for a real click would
-            # contaminate the imagery trial with movement and muscle activity.
-            verdict = "imagery recorded (no physical click required)"
+        if self.button_mi or self.intent_mi:
+            # Mental compliance is not observable. A real click/movement would
+            # contaminate the imagery epoch with muscle activity.
+            verdict = "imagery recorded (no physical movement required)"
         else:
             verdict = "correct" if ok else (f"clicked {hit.name}" if hit else "no click")
         print(f"           -> {verdict}")
 
         row = {
             "trial": self.trial,
-            "target": self.target.name,
-            "target_id": self.target.id,
+            "target": self.target.name if self.target is not None else "idle",
+            "target_id": self.target.id if self.target is not None else -1,
             "cue_start_ms": self.cue_start,
             "cue_end_ms": now,
             "clicked": hit.name if hit else "",
-            "correct": "" if self.button_mi else int(ok),
+            "correct": "" if (self.button_mi or self.intent_mi) else int(ok),
         }
         if self.mi:
             hand, label = HAND_LABELS[self.cue_hand]
@@ -512,6 +641,12 @@ class CuedRecorder:
             row["button_hand"] = self.button_hand
             row["button_index"] = self.buttons.index(self.target)
             row["label"] = self._button_label(self.target)
+            row["cue_sample"] = self.cue_sample
+            row["compliance"] = "not_observable"
+        elif self.intent_mi:
+            row["intent"] = self.cue_intent
+            row["class_index"] = self.intent_class[self.cue_intent]
+            row["label"] = api.make_intent_label(self.cue_intent)
             row["cue_sample"] = self.cue_sample
             row["compliance"] = "not_observable"
         self.log.append(row)
@@ -548,7 +683,7 @@ class CuedRecorder:
         if self.phase == self.CUE:
             # self-heal: the example script may restart its own non-looping
             # flash on click, which would end our cue ripple early
-            if not self.target.is_flashing:
+            if self.target is not None and not self.target.is_flashing:
                 self.target.flash(loop=True, waves=2, pulse_hz=0.5)
             if clock_now >= self.phase_end:
                 self._end_cue(now)
@@ -604,7 +739,13 @@ class CuedRecorder:
         win.blit(bar, (0, 0))
 
         if self.phase == self.CUE:
-            if self.button_mi:
+            if self.intent_mi:
+                api = _load_motor_intent_api()
+                if self.cue_intent == api.IDLE:
+                    msg = "REST / NO MOVEMENT"
+                else:
+                    msg = f"IMAGINE:  {api.intent_display_name(self.cue_intent)}"
+            elif self.button_mi:
                 msg = f"IMAGINE PRESSING:  {self.target.name.upper()}"
             else:
                 msg = f"LOOK AT:  {self.target.name.upper()}"
@@ -645,6 +786,15 @@ class CuedRecorder:
         elif self.button_mi and self.phase == self.CUE:
             hint = (f"feel your {self.button_hand} hand reach to its screen "
                     f"position and press - keep the real hand still")
+            hs = self.font_sm.render(hint, True, (220, 226, 240))
+            win.blit(hs, hs.get_rect(center=(w // 2, 47)))
+        elif self.intent_mi and self.phase == self.CUE:
+            api = _load_motor_intent_api()
+            action = None if self.target is None else self.target.name
+            hint = api.intent_instruction(self.cue_intent, action)
+            # Keep the overlay compact on 800 px demo windows.
+            if len(hint) > 92:
+                hint = hint[:89] + "..."
             hs = self.font_sm.render(hint, True, (220, 226, 240))
             win.blit(hs, hs.get_rect(center=(w // 2, 47)))
         rec = "REC" if self.capture is not None or self.bci is not None else "DRY-RUN (no EEG)"
@@ -689,22 +839,25 @@ def run_example(args):
     script_source = script.read_text()
     explicit_integration = "__bci_recorder_frame__" in script_source
 
-    if args.button_mi:
+    if args.button_mi or args.intent_mi:
         preload_started = time.perf_counter()
-        _load_button_label_fn()
+        if args.button_mi:
+            _load_button_label_fn()
+        else:
+            _load_motor_intent_api()
         if args.debug_timing:
-            print(f"[REC DEBUG] preloaded button-MI label module in "
+            print(f"[REC DEBUG] preloaded MI label module in "
                   f"{(time.perf_counter() - preload_started) * 1000.0:.1f}ms",
                   flush=True)
 
     BCI = capture = None
-    capture_mode = args.mi or args.button_mi
+    capture_mode = args.mi or args.button_mi or args.intent_mi
     if capture_mode:
         # Calibration modes own the stream through StreamBridge's
         # BrainFlowBackend, because they must keep every sample to epoch
         # afterwards. Direct-button data is saved in an isolated directory.
         if not args.subject:
-            print("--mi/--button-mi needs --subject")
+            print("--mi/--button-mi/--intent-mi needs --subject")
             return 1
         if args.dry_run:
             from stream_bridge import SyntheticBackend
@@ -728,6 +881,8 @@ def run_example(args):
     rec = CuedRecorder(BCI, trials=args.trials, cue_s=args.cue,
                        rest_s=args.rest, script=script.stem,
                        mi=args.mi, button_mi=args.button_mi,
+                       intent_mi=args.intent_mi, intent_map=args.intent_map,
+                       idle_trials=args.idle_trials,
                        button_hand=args.button_hand, capture=capture)
     if capture_mode and args.cue < 3.0:
         print(f"  WARNING: cue {args.cue}s is shorter than the 3.0s epoch "
@@ -735,12 +890,18 @@ def run_example(args):
               f"or more.")
 
     print(f"\nRunning {script.name}")
-    print(f"  {args.trials} trials · {args.cue}s cue · {args.rest}s rest")
+    if args.intent_mi:
+        print(f"  {args.trials} action trials + {args.idle_trials} idle trials · "
+              f"{args.cue}s cue · {args.rest}s rest")
+    else:
+        print(f"  {args.trials} trials · {args.cue}s cue · {args.rest}s rest")
     print("  recorder integration: " +
           ("explicit app frame hook" if explicit_integration
            else "legacy pygame fallback hooks"))
     if args.button_mi:
         print("  imagine the complete reach-and-press action; do NOT physically click\n")
+    elif args.intent_mi:
+        print("  follow the physical motor-intent cue; do NOT physically move\n")
     else:
         print("  the flashing button is your target - try to select it\n")
 
@@ -770,7 +931,12 @@ def run_example(args):
         warm = pygame.Surface(win.get_size(), pygame.SRCALPHA)
         for button in rec.buttons:
             button.flash(loop=True, waves=2, pulse_hz=0.5)
-            button.draw(warm)
+            try:
+                button.draw(warm)
+            except TypeError:
+                # Generic BCI_RECORD_TARGETS may require app-owned font args.
+                # Their drawing is already exercised by the app each frame.
+                pass
             button.stop_flash()
         rec._fonts()
         rec.font_big.render("IMAGINE PRESSING", True, (250, 214, 110))
@@ -830,6 +996,13 @@ def run_example(args):
         if not rec.buttons:
             debug_line(source, wall_ms)
             return
+        if rec.intent_mi and not rec.intent_map:
+            default_map = namespace.get("BCI_INTENT_MAP")
+            if not default_map:
+                raise ValueError(
+                    "--intent-mi needs BCI_INTENT_MAP in the example or "
+                    "--intent-map action=intent,...")
+            rec.set_intent_map(default_map)
 
         prewarm_first_cue(win)
 
@@ -1001,6 +1174,9 @@ def run_example(args):
             if args.button_mi:
                 print(f"\n  {len(rec.log)} button-imagery trials recorded; "
                       "mental compliance is not observable")
+            elif args.intent_mi:
+                print(f"\n  {len(rec.log)} motor-intent trials recorded; "
+                      "mental compliance is not observable")
             else:
                 hits = sum(r["correct"] for r in rec.log)
                 print(f"\n  {hits}/{len(rec.log)} trials matched the cue")
@@ -1015,6 +1191,9 @@ def run_example(args):
             if args.button_mi:
                 X, y, labels = epoch_button_mi_from_log(
                     stream, capture.fs, rec.log, t0_ms=0)
+            elif args.intent_mi:
+                X, y, labels = epoch_intent_mi_from_log(
+                    stream, capture.fs, rec.log, t0_ms=0)
             else:
                 X, y, labels = epoch_from_log(stream, capture.fs, rec.log,
                                               t0_ms=0)
@@ -1026,6 +1205,9 @@ def run_example(args):
                 elif args.button_mi:
                     from ML.button_mi import button_profile_dir
                     out = button_profile_dir(args.subject, script.stem)
+                elif args.intent_mi:
+                    api = _load_motor_intent_api()
+                    out = api.intent_profile_dir(args.subject, rec.intent_values)
                 else:
                     out = ROOT / "profiles" / args.subject.lower()
                 npz = save_session(X, y, labels, args.subject, capture.fs,
@@ -1038,6 +1220,15 @@ def run_example(args):
                     print(f"  button calibration -> {npz}")
                     print(f"  next:  python ML/train_button_mi.py "
                           f"{args.subject} --app {script.stem}")
+                elif args.intent_mi:
+                    counts = [(name, int((y == index).sum()))
+                              for name, index in rec.intent_class.items()]
+                    print(f"  {len(X)} reusable motor-intent epochs  (" +
+                          " / ".join(f"{name} {n}" for name, n in counts) + ")")
+                    print(f"  intent calibration -> {npz}")
+                    joined = ",".join(rec.intent_values)
+                    print(f"  next:  python ML/train_intent_mi.py "
+                          f"{args.subject} --intents {joined}")
                 else:
                     n0 = int((y == 0).sum()); n1 = int((y == 1).sum())
                     print(f"  {len(X)} epochs  (LEFT {n0} / RIGHT {n1})")
@@ -1213,15 +1404,23 @@ def cli():
                        help="existing calibration mode: LEFT/RIGHT hand labels; "
                             "writes data for ML/train_local.py")
     modes.add_argument("--button-mi", action="store_true",
-                       help="experimental direct-button imagery mode; isolated "
-                            "data/model, no LEFT/RIGHT selection tree")
+                       help="legacy experimental button-labelled imagery mode")
+    modes.add_argument("--intent-mi", "--finger-mi", dest="intent_mi",
+                       action="store_true",
+                       help="recommended reusable physical motor-intent mode")
+    ap.add_argument("--intent-map", "--finger-map", dest="intent_map",
+                    default=None,
+                    help="override action=intent pairs; otherwise use the "
+                         "example's BCI_INTENT_MAP")
+    ap.add_argument("--idle-trials", type=int, default=10,
+                    help="no-movement trials added in --intent-mi (default 10)")
     ap.add_argument("--button-hand", choices=["left", "right"], default="right",
-                    help="fixed imagined hand for --button-mi (default right)")
+                    help="fixed imagined hand for legacy --button-mi")
     ap.add_argument("--subject", default=None,
-                    help="subject name for --mi or --button-mi (required)")
+                    help="subject name for any MI calibration mode")
     ap.add_argument("--montage", default="cyton8_motor")
     ap.add_argument("--out", default=None,
-                    help="output dir override; defaults keep --mi and --button-mi isolated")
+                    help="output override; default keeps all MI modes isolated")
     ap.add_argument("--debug-timing", action="store_true",
                     help="print a 1 Hz recorder heartbeat, phase transitions, "
                          "frame-hook activity and capture-thread state")

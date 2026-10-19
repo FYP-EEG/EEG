@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sensorimotor Action Atlas</title>
+<style>
+  :root {
+    --bg:#091018; --panel:#0e1823; --panel2:#121f2c; --ink:#edf6f8;
+    --muted:#8ea5ae; --line:#263846; --cyan:#47d7d0; --pink:#ff6e9c;
+    --gold:#f4c95d; --violet:#9c8cff; --green:#7ddb9b; --danger:#ff806f;
+    --shadow:0 18px 46px rgba(0,0,0,.34);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  body{overflow:hidden;background:
+    radial-gradient(circle at 18% 8%,rgba(71,215,208,.08),transparent 28%),
+    radial-gradient(circle at 78% 0%,rgba(156,140,255,.07),transparent 27%),var(--bg)}
+  button,input{font:inherit}
+  button{color:inherit}
+  .app{height:100%;display:grid;grid-template-rows:auto 1fr}
+  header{display:flex;align-items:center;gap:20px;padding:16px 22px;border-bottom:1px solid var(--line);background:rgba(9,16,24,.88);backdrop-filter:blur(16px);z-index:5}
+  .brand{display:flex;align-items:center;gap:12px;min-width:330px}
+  .mark{width:38px;height:38px;border:1px solid rgba(71,215,208,.55);border-radius:50%;position:relative;box-shadow:inset 0 0 22px rgba(71,215,208,.13)}
+  .mark:before,.mark:after{content:"";position:absolute;inset:8px;border:1px solid var(--cyan);border-radius:46% 54% 60% 40%;transform:rotate(35deg)}
+  .mark:after{inset:15px;background:var(--gold);border:0;box-shadow:0 0 14px var(--gold)}
+  h1{font-size:17px;letter-spacing:.02em;margin:0;font-weight:720}.sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .top-controls{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .seg{display:flex;background:#0b141e;border:1px solid var(--line);padding:3px;border-radius:10px}
+  .seg button,.pill{border:0;background:transparent;padding:7px 11px;border-radius:7px;font-size:12px;cursor:pointer;color:var(--muted)}
+  .seg button.active,.pill.active{background:var(--panel2);color:var(--ink);box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  .layout{min-height:0;display:grid;grid-template-columns:238px minmax(420px,1fr) 340px}
+  aside,.details{min-height:0;overflow:auto;background:rgba(14,24,35,.76);backdrop-filter:blur(10px)}
+  aside{border-right:1px solid var(--line);padding:18px 15px}.details{border-left:1px solid var(--line);padding:19px}
+  .section{margin-bottom:21px}.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:9px;font-weight:700}
+  .search{width:100%;border:1px solid var(--line);background:#0a141e;color:var(--ink);padding:10px 11px;border-radius:9px;outline:none;font-size:12px}.search:focus{border-color:var(--cyan)}
+  .filters{display:flex;flex-wrap:wrap;gap:7px}.filter{border:1px solid var(--line);background:#0b151f;color:var(--muted);border-radius:99px;padding:6px 9px;font-size:11px;cursor:pointer}.filter.active{border-color:rgba(71,215,208,.65);color:var(--cyan);background:rgba(71,215,208,.08)}
+  .check{display:flex;align-items:center;gap:9px;padding:7px 0;font-size:12px;color:#bfd0d5;cursor:pointer}.check input{accent-color:var(--cyan)}
+  .legend{display:grid;gap:8px}.legend-row{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--muted)}.dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 10px currentColor}.ring{width:10px;height:10px;border:2px solid currentColor;border-radius:50%}
+  .note{padding:11px;border:1px solid rgba(244,201,93,.24);background:rgba(244,201,93,.06);border-radius:9px;color:#c9c0a0;font-size:11px;line-height:1.48}
+  .pathway{padding:11px;border:1px solid var(--line);border-radius:9px;background:#0a141d;font-size:11px;line-height:1.55;color:#afc0c6}.pathway strong{color:var(--ink)}
+  main{min-width:0;min-height:0;position:relative;overflow:hidden}
+  canvas{width:100%;height:100%;display:block;cursor:crosshair;outline:none}
+  .canvas-bar{position:absolute;left:18px;right:18px;top:16px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none}
+  .view-label{padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:rgba(9,16,24,.76);font-size:11px;color:var(--muted);line-height:1.4}.view-label b{display:block;color:var(--ink);font-size:12px}
+  .hint{align-self:flex-end;padding:7px 9px;background:rgba(9,16,24,.72);border:1px solid var(--line);border-radius:8px;font-size:10px;color:var(--muted)}
+  .orientation{position:absolute;left:19px;bottom:18px;display:flex;gap:8px;font-size:10px;color:var(--muted);align-items:center}.axis{width:43px;height:43px;border-left:1px solid #5e7580;border-bottom:1px solid #5e7580;position:relative}.axis:before{content:"S";position:absolute;left:-4px;top:-14px}.axis:after{content:"A";position:absolute;right:-11px;bottom:-6px}
+  .tooltip{position:fixed;z-index:20;pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .12s,transform .12s;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#08111a;box-shadow:var(--shadow);font-size:11px;max-width:220px}.tooltip.show{opacity:1;transform:none}.tooltip b{display:block;margin-bottom:2px}.tooltip span{color:var(--muted)}
+  .node-kicker{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;margin-bottom:8px}.details h2{font-size:24px;line-height:1.08;margin:0 0 5px}.full{font-size:12px;color:var(--muted);margin-bottom:16px}
+  .info-block{padding:13px 0;border-top:1px solid var(--line)}.info-title{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:800;margin-bottom:7px}.info-text{font-size:13px;line-height:1.55;color:#c9d7db}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:10px;padding:5px 7px;border-radius:6px;background:#172634;color:#bcd0d6;border:1px solid #263c4b}
+  .channel-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.channel{padding:7px 4px;text-align:center;border:1px solid var(--line);border-radius:7px;background:#0a141d;color:#607985;font-size:10px}.channel.hot{color:var(--cyan);border-color:rgba(71,215,208,.42);background:rgba(71,215,208,.07)}.channel.warm{color:var(--gold);border-color:rgba(244,201,93,.4);background:rgba(244,201,93,.06)}
+  .caution{font-size:12px;line-height:1.48;color:#e6b1a8;background:rgba(255,128,111,.06);border:1px solid rgba(255,128,111,.22);padding:10px;border-radius:8px}
+  .source{display:block;color:#78d8d2;text-decoration:none;font-size:11px;line-height:1.45;margin:6px 0}.source:hover{text-decoration:underline}
+  .mini{font-size:10px;color:var(--muted);line-height:1.45}
+  .footer-badge{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:10px;color:var(--muted)}.footer-badge i{width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 8px var(--green)}
+  @media(max-width:1050px){.layout{grid-template-columns:210px 1fr 300px}.details{padding:14px}.details h2{font-size:21px}}
+  @media(max-width:790px){body{overflow:auto}.app{height:auto;min-height:100%}header{position:sticky;top:0}.brand{min-width:0}.sub{display:none}.layout{display:flex;flex-direction:column}.layout aside{order:2;border:0;border-top:1px solid var(--line)}main{height:62vh;min-height:450px;order:1}.details{order:3;border:0;border-top:1px solid var(--line)}.top-controls{margin-left:0}.hint{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><div class="mark"></div><div><h1>Sensorimotor Action Atlas</h1><div class="sub">Interactive cortical network × EEG montage map</div></div></div>
+    <div class="top-controls">
+      <div class="seg" aria-label="Map mode"><button id="mode2d" class="active">2D lateral</button><button id="mode3d">3D rotate</button></div>
+      <div class="seg" id="hemiControl"><button data-hemi="left" class="active">Left cortex · right hand</button><button data-hemi="right">Right cortex · left hand</button></div>
+    </div>
+  </header>
+  <div class="layout">
+    <aside>
+      <div class="section"><div class="eyebrow">Find a node</div><input id="search" class="search" placeholder="e.g. grasp, C3, sequence"></div>
+      <div class="section"><div class="eyebrow">Action filter</div><div class="filters" id="filters">
+        <button class="filter active" data-filter="all">All</button><button class="filter" data-filter="finger">Finger</button><button class="filter" data-filter="shape">Hand shape</button><button class="filter" data-filter="reach">Reach</button><button class="filter" data-filter="sequence">Sequence</button><button class="filter" data-filter="touch">Touch</button><button class="filter" data-filter="goal">Goal</button>
+      </div></div>
+      <div class="section"><div class="eyebrow">Layers</div>
+        <label class="check"><input id="cortexLayer" type="checkbox" checked> Cortical network nodes</label>
+        <label class="check"><input id="electrodeLayer" type="checkbox" checked> Current EEG electrodes</label>
+        <label class="check"><input id="deepLayer" type="checkbox" checked> Deep / midline nodes</label>
+      </div>
+      <div class="section"><div class="eyebrow">Legend</div><div class="legend">
+        <div class="legend-row"><span class="dot" style="color:var(--cyan);background:var(--cyan)"></span> Left hemisphere</div>
+        <div class="legend-row"><span class="dot" style="color:var(--pink);background:var(--pink)"></span> Right hemisphere</div>
+        <div class="legend-row"><span class="dot" style="color:var(--gold);background:var(--gold)"></span> Midline / bilateral</div>
+        <div class="legend-row"><span class="dot" style="color:var(--violet);background:var(--violet)"></span> Deep network</div>
+        <div class="legend-row"><span class="ring" style="color:#d7f3f5"></span> Scalp electrode</div>
+      </div></div>
+      <div class="section"><div class="eyebrow">Selected pathway</div><div class="pathway" id="pathway"></div></div>
+      <div class="note"><b>Interpretation rule</b><br>An electrode is not a cortical node. It records a volume-conducted mixture, and finger representations overlap. Use patterns across channels—not “one electrode per action”.</div>
+    </aside>
+
+    <main>
+      <canvas id="atlas" tabindex="0" aria-label="Interactive sensorimotor brain map"></canvas>
+      <div class="canvas-bar"><div class="view-label"><b id="viewTitle">Left lateral network</b><span id="viewSub">Right-hand motor imagery · anterior faces right</span></div><div class="hint" id="hint">Hover a node · click to pin</div></div>
+      <div class="orientation"><div class="axis"></div><span>Superior / anterior</span></div>
+    </main>
+
+    <section class="details" id="details" aria-live="polite">
+      <div class="node-kicker" id="nodeKicker"></div><h2 id="nodeName"></h2><div class="full" id="nodeFull"></div>
+      <div class="info-block"><div class="info-title">Functional purpose</div><div class="info-text" id="nodePurpose"></div></div>
+      <div class="info-block"><div class="info-title">Associated actions</div><div class="chips" id="nodeActions"></div></div>
+      <div class="info-block"><div class="info-title">Expected EEG relevance</div><div class="info-text" id="nodeSignal"></div></div>
+      <div class="info-block"><div class="info-title">Current montage relationship</div><div class="channel-grid" id="channels"></div><div class="mini" id="channelNote" style="margin-top:8px"></div></div>
+      <div class="info-block"><div class="info-title">Scientific caution</div><div class="caution" id="nodeCaution"></div></div>
+      <div class="info-block"><div class="info-title">Academic sources</div><div id="nodeSources"></div></div>
+      <div class="footer-badge"><i></i> Research map · not a diagnostic localization tool</div>
+    </section>
+  </div>
+</div>
+<div class="tooltip" id="tooltip"><b></b><span></span></div>
+<script>
+(() => {
+  const CH = ['FC3','FC4','C3','Cz','C4','CP3','CP4','Pz'];
+  const S = {
+    hetu:{t:'Hétu et al. (2013) · MI network meta-analysis',u:'https://doi.org/10.1016/j.neubiorev.2013.03.017'},
+    hardwick:{t:'Hardwick et al. (2018) · imagery, observation and execution',u:'https://doi.org/10.1016/j.neubiorev.2018.08.003'},
+    finger:{t:'Dechent & Frahm (2003) · overlapping finger somatotopy',u:'https://doi.org/10.1002/hbm.10084'},
+    handknob:{t:'Yousry et al. (1997) · precentral hand knob',u:'https://doi.org/10.1093/brain/120.1.141'},
+    reach:{t:'Filimon (2010) · reaching, grasping and pointing networks',u:'https://doi.org/10.1177/1073858410375468'},
+    actions:{t:'Pilgramm et al. (2016) · imagined hand-action content',u:'https://doi.org/10.1002/hbm.23015'},
+    connectivity:{t:'Kim et al. (2018) · MI effective connectivity',u:'https://doi.org/10.1371/journal.pone.0190715'},
+    erd:{t:'Pfurtscheller & Lopes da Silva (1999) · ERD/ERS principles',u:'https://doi.org/10.1016/S1388-2457(99)00141-8'},
+    electrode:{t:'Scrivener & Reader (2022) · electrode/anatomy variability',u:'https://doi.org/10.1002/brb3.2476'},
+    mapping:{t:'Koessler et al. (2009) · 10–10 cortical projections',u:'https://doi.org/10.1016/j.neuroimage.2009.02.006'},
+    tactile:{t:'Shkurko et al. (2023) · tactile imagery ERD',u:'https://doi.org/10.1523/ENEURO.0455-22.2023'}
+  };
+  const nodes = [];
+  const add = n => nodes.push(n);
+  const cortical = (id,name,full,side,pos,purpose,actions,signal,channels,caution,sources,tags) => add({id,name,full,side,pos,purpose,actions,signal,channels,caution,sources,tags,type:'cortex'});
+  cortical('m1-l','M1 · hand knob','Left primary motor cortex · BA4','left',[-.64,.02,.23],'Contributes the final cortical motor command and represents movement direction, force and muscle synergies. The hand area lies near the precentral “hand knob”.',['finger flexion','hand opening / closing','grip force','button press'],'Right-hand imagery may produce weaker motor-network modulation here than execution. Finger classes share strongly overlapping M1 representations.',['C3','Cz','FC3'],'M1 is not consistently activated in every MI study, and C3 is only an approximate scalp proxy—not a direct M1 measurement.',[S.handknob,S.finger,S.hetu,S.electrode],['finger','shape']);
+  cortical('m1-r','M1 · hand knob','Right primary motor cortex · BA4','right',[.64,.02,.23],'Contributes final cortical motor output for the contralateral hand and participates more weakly during imagined than executed movement.',['finger flexion','hand opening / closing','grip force'],'Most relevant to left-hand MI; it may also contribute bilateral/contextual information during right-hand tasks.',['C4','Cz','FC4'],'Do not infer a unique left-hand command from C4 alone. Sensor position and cortical sources vary across users.',[S.handknob,S.hetu,S.electrode],['finger','shape']);
+  cortical('s1-l','S1','Left primary somatosensory cortex · BA3/1/2','left',[-.68,-.16,.20],'Represents tactile contact, proprioception, finger position and the expected sensory consequence of movement.',['imagined touch','button pressure','finger position','hand shape'],'Kinesthetic and tactile imagery can modulate contralateral sensorimotor rhythms.',['C3','CP3'],'S1 and M1 activity are spatially mixed at scalp sensors. C3 may project closer to postcentral cortex in some people.',[S.tactile,S.electrode,S.mapping],['touch','finger','shape']);
+  cortical('s1-r','S1','Right primary somatosensory cortex · BA3/1/2','right',[.68,-.16,.20],'Represents tactile and proprioceptive state of the contralateral hand.',['imagined touch','button pressure','finger position'],'Most relevant to left-hand kinesthetic or tactile imagery.',['C4','CP4'],'CP4 and C4 are not pure somatosensory measurements; each contains mixed activity.',[S.tactile,S.electrode],['touch','finger']);
+  cortical('pmd-l','PMd','Left dorsal premotor cortex · BA6','left',[-.55,.33,.34],'Selects and prepares movements using target direction, visual cues and current body position.',['reach direction','aiming','cue-to-action mapping','press preparation'],'Expected to contribute when the right hand is imagined reaching toward a spatial target.',['FC3','C3'],'Premotor and M1 sources overlap at low-density scalp EEG. Visual target cues can become a confound.',[S.reach,S.actions,S.hetu],['reach','goal','finger']);
+  cortical('pmd-r','PMd','Right dorsal premotor cortex · BA6','right',[.55,.33,.34],'Prepares spatially guided movements and target-directed actions.',['reach direction','aiming','action preparation'],'Most relevant to left-hand reach imagery; may also contribute bilateral spatial planning.',['FC4','C4'],'Do not interpret FC4 as a pure right-PMd channel.',[S.reach,S.mapping],['reach','goal']);
+  cortical('pmv-l','PMv','Left ventral premotor cortex · BA6','left',[-.78,.28,-.02],'Selects hand posture and grip configuration, especially for object-related and purposeful actions.',['power grasp','precision grip','fist','open hand','scissors shape'],'Useful for differentiating hand shapes and grip programmes rather than simple left/right laterality.',['FC3'],'The current montage lacks more lateral FC5 coverage, so PMv sensitivity is incomplete.',[S.reach,S.actions],['shape','goal','finger']);
+  cortical('pmv-r','PMv','Right ventral premotor cortex · BA6','right',[.78,.28,-.02],'Contributes hand-posture selection and action observation/goal coding.',['grip selection','hand preshaping','object manipulation'],'Relevant mainly to left-hand hand-shape MI and bilateral action representation.',['FC4'],'FC4 is more medial than ideal lateral PMv coverage.',[S.reach,S.actions],['shape','goal']);
+  cortical('aips-l','aIPS / IPL','Left anterior intraparietal and inferior parietal regions','left',[-.72,-.36,.12],'Transforms object geometry and action goals into finger aperture and hand preshaping.',['grasp type','finger aperture','tool / object use','press target'],'Supports the “what hand shape is needed?” component of Rock/Paper/Scissors and button pressing.',['CP3','Pz'],'A lateral parietal source may be only partly sampled by CP3/Pz. Eye position and visual attention must be controlled.',[S.reach,S.actions],['shape','reach','goal']);
+  cortical('aips-r','aIPS / IPL','Right anterior intraparietal and inferior parietal regions','right',[.72,-.36,.12],'Transforms object and target properties into hand configuration.',['grasp type','finger aperture','object manipulation'],'Relevant to left-hand grasping and bilateral visuomotor processing.',['CP4','Pz'],'Scalp signals do not isolate aIPS from neighbouring parietal sources.',[S.reach],['shape','reach','goal']);
+  cortical('spl-l','SPL / medial PPC','Left superior and medial posterior parietal cortex','left',[-.45,-.53,.40],'Transforms visual, gaze, proprioceptive and body coordinates into a reach trajectory and monitors hand position.',['reach to screen target','pointing','trajectory','spatial selection'],'Especially relevant when buttons occupy left/centre/right positions and the right hand is imagined moving toward them.',['CP3','Pz'],'Spatial target decoding may reflect gaze/attention rather than MI unless eye behaviour and cues are controlled.',[S.reach,S.actions],['reach','goal']);
+  cortical('spl-r','SPL / medial PPC','Right superior and medial posterior parietal cortex','right',[.45,-.53,.40],'Supports spatial transformation, reaching and online position monitoring.',['reach to target','trajectory','pointing'],'Contributes left-hand reach and bilateral spatial representations.',['CP4','Pz'],'Pz and CP4 are broad parietal measurements, not source-localized SPL.',[S.reach],['reach','goal']);
+  cortical('dlpfc-l','DLPFC','Left dorsolateral prefrontal cortex','left',[-.55,.61,.22],'Maintains the task rule, goal and working memory, and helps suppress an incorrect response.',['remember cue','choose rule','task switching','suppress movement'],'It controls the task context more than the hand movement itself.',['FC3'],'The current montage has no dedicated F3/F4 coverage, so DLPFC is poorly sampled.',[S.connectivity,S.hetu],['goal','sequence']);
+  cortical('dlpfc-r','DLPFC','Right dorsolateral prefrontal cortex','right',[.55,.61,.22],'Supports attention, rule maintenance and executive control during imagery.',['maintain goal','task switching','attention'],'Task engagement may influence broad frontal signals.',['FC4'],'Do not use frontal task activity as proof of a motor class.',[S.connectivity],['goal','sequence']);
+  cortical('sma','SMA / pre-SMA','Supplementary and pre-supplementary motor areas','mid',[0,.19,.58],'Supports internally generated movement, initiation, rhythm, sequencing and bimanual coordination. MI often depends strongly on this node.',['repetitive finger MI','ordered tapping','self-paced action','gesture sequence'],'Central to rhythmic thumb/index/pinky imagery and multi-step gestures.',['Cz','FC3','FC4'],'FCz would cover medial premotor cortex more directly; Cz is only an approximation.',[S.hetu,S.hardwick,S.connectivity],['sequence','finger','shape']);
+  cortical('bg','Basal ganglia','Putamen and associated action-selection circuits','deep',[-.16,.08,-.05],'Selects, initiates and learns motor programmes and action sequences.',['learned command selection','movement initiation','habit sequence'],'A component of the MI network but not directly localized by the current scalp montage.',['Cz'],'Deep activity reaches scalp only indirectly as distributed network effects.',[S.hetu,S.hardwick],['goal','sequence']);
+  cortical('cb','Cerebellum','Cerebellar prediction and timing network','deep',[0,-.68,-.42],'Provides internal prediction, timing, error correction and simulation of movement consequences.',['rhythmic finger action','trajectory timing','motor learning'],'Relevant to imagery quality and timing but not assignable to one scalp sensor.',['Pz'],'The current scalp montage cannot localize cerebellar activity.',[S.hetu,S.hardwick],['sequence','reach']);
+
+  const electrode = (id,name,pos,purpose,actions,signal,channels,caution,sources,tags,side) => add({id,name,full:'Current montage scalp electrode',side,pos,purpose,actions,signal,channels,caution,sources,tags,type:'electrode'});
+  electrode('e-fc3','FC3',[-.74,.28,.55],'Left frontocentral sensor: broadly sensitive to premotor/frontal and nearby sensorimotor mixtures.',['right-hand planning','reach preparation','gesture selection'],'Useful in covariance with C3 and CP3; it is a signal sensor, not an anatomical node.',['FC3'],'FC3 is not a forehead blink-only channel. Aggressive artifact rejection here can remove genuine motor information.',[S.mapping,S.electrode],['reach','goal','shape'],'left');
+  electrode('e-fc4','FC4',[.74,.28,.55],'Right frontocentral sensor: broadly sensitive to right premotor/frontal and nearby sensorimotor mixtures.',['left-hand planning','bilateral control'],'Useful with C4/CP4 and as a control feature for right-hand-only imagery.',['FC4'],'FC4 is not a pure artifact channel.',[S.mapping,S.electrode],['reach','goal'],'right');
+  electrode('e-c3','C3',[-.86,.00,.47],'Left central sensor over a mixed precentral/postcentral field. Classical right-hand sensorimotor ROI.',['right hand','right fingers','mu/beta ERD'],'Core channel for right-hand MI, but fine classes require surrounding channels.',['C3'],'A fixed-cap study mapped C3 mainly to postcentral rather than precentral cortex; avoid calling it a direct M1 electrode.',[S.erd,S.electrode],['finger','shape','touch'],'left');
+  electrode('e-cz','Cz',[0,.00,.90],'Midline central sensor with SMA-adjacent and bilateral sensorimotor sensitivity.',['movement onset','sequence','bilateral action'],'Useful for rhythmic/sequential finger imagery and common movement activity.',['Cz'],'Cz is not exclusively a feet electrode.',[S.connectivity,S.mapping],['sequence','finger'],'mid');
+  electrode('e-c4','C4',[.86,.00,.47],'Right central sensor over mixed sensorimotor cortex; classical left-hand ROI.',['left hand','left fingers','mu/beta ERD'],'Useful left-hand channel and ipsilateral/control feature for right-hand fine MI.',['C4'],'C4 is not a direct left-hand command detector by itself.',[S.erd,S.electrode],['finger','shape','touch'],'right');
+  electrode('e-cp3','CP3',[-.74,-.30,.50],'Left centroparietal sensor sampling posterior sensorimotor and parietal mixtures.',['right-hand kinesthesia','imagined contact','reach/grasp transform'],'Complements FC3–C3 for right-hand fine action patterns.',['CP3'],'Its cortical projection varies and may include supramarginal/superior parietal regions.',[S.electrode,S.mapping],['touch','reach','shape'],'left');
+  electrode('e-cp4','CP4',[.74,-.30,.50],'Right centroparietal sensor sampling posterior sensorimotor/parietal mixtures.',['left-hand kinesthesia','bilateral hand state'],'Complements FC4–C4 and provides control information in right-hand tasks.',['CP4'],'Not a one-to-one S1 measurement.',[S.electrode],['touch','reach','shape'],'right');
+  electrode('e-pz','Pz',[0,-.48,.82],'Midline posterior sensor with precuneus/superior-parietal bias.',['spatial target','attention','reach context'],'Potentially useful for target/reach context and distributed network features.',['Pz'],'Visual attention and eye behaviour can dominate apparent button-position effects.',[S.electrode,S.reach],['reach','goal'],'mid');
+
+  const canvas=document.getElementById('atlas'), ctx=canvas.getContext('2d');
+  let mode='2d', hemi='left', action='all', selected=nodes.find(n=>n.id==='m1-l'), hovered=null;
+  let rotY=-.62,rotX=-.15,zoom=1,drag=false,last={x:0,y:0},projected=[];
+  let showCortex=true,showElectrodes=true,showDeep=true,query='';
+  const colors={left:'#47d7d0',right:'#ff6e9c',mid:'#f4c95d',deep:'#9c8cff',electrode:'#d7f3f5'};
+  const $=id=>document.getElementById(id);
+  function resize(){const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);canvas.width=r.width*d;canvas.height=r.height*d;ctx.setTransform(d,0,0,d,0,0);draw()}
+  new ResizeObserver(resize).observe(canvas);
+  function visible(n){if(n.type==='cortex'&&!showCortex)return false;if(n.type==='electrode'&&!showElectrodes)return false;if(n.side==='deep'&&!showDeep)return false;if(mode==='2d'&&n.side!=='mid'&&n.side!=='deep'&&n.side!==hemi)return false;if(action!=='all'&&!n.tags.includes(action))return false;if(query){const q=query.toLowerCase(),hay=[n.name,n.full,n.purpose,...n.actions,...n.channels].join(' ').toLowerCase();if(!hay.includes(q))return false}return true}
+  function opacity(n){if(action==='all'&&!query)return 1;return visible(n)?1:.12}
+  function rotate(p){let [x,y,z]=p;let cy=Math.cos(rotY),sy=Math.sin(rotY),cx=Math.cos(rotX),sx=Math.sin(rotX);let x1=x*cy-y*sy,y1=x*sy+y*cy;let y2=y1*cx-z*sx,z2=y1*sx+z*cx;return[x1,y2,z2]}
+  function project3(p,w,h){let [x,y,z]=rotate(p),pers=2.8/(3.15-y),s=Math.min(w,h)*.35*zoom*pers;return{x:w/2+x*s,y:h/2-z*s,depth:y,scale:pers}}
+  function project2(n,w,h){let side=n.side==='right'?-1:1;let y=n.pos[1],z=n.pos[2];return{x:w*.50+y*w*.34,y:h*.55-z*h*.53,depth:n.pos[0]*side,scale:1}}
+  function brain2d(w,h){ctx.save();ctx.translate(w*.50,h*.53);let sx=w*.31,sy=h*.34;ctx.beginPath();ctx.moveTo(-sx*.94,sy*.18);ctx.bezierCurveTo(-sx*1.03,-sy*.30,-sx*.58,-sy*.92,sx*.02,-sy*.88);ctx.bezierCurveTo(sx*.62,-sy*.95,sx*1.02,-sy*.54,sx*.98,-sy*.02);ctx.bezierCurveTo(sx*.96,sy*.35,sx*.68,sy*.62,sx*.22,sy*.67);ctx.bezierCurveTo(-sx*.18,sy*.78,-sx*.78,sy*.66,-sx*.94,sy*.18);ctx.closePath();let g=ctx.createLinearGradient(-sx,-sy,sx,sy);g.addColorStop(0,'rgba(71,215,208,.12)');g.addColorStop(1,'rgba(156,140,255,.045)');ctx.fillStyle=g;ctx.fill();ctx.strokeStyle='rgba(132,168,180,.45)';ctx.lineWidth=1.2;ctx.stroke();ctx.strokeStyle='rgba(95,126,138,.24)';ctx.lineWidth=1;for(let i=0;i<7;i++){ctx.beginPath();let yy=-sy*.65+i*sy*.20;ctx.moveTo(-sx*.78,yy);ctx.bezierCurveTo(-sx*.34,yy-sy*.17,sx*.18,yy+sy*.20,sx*.78,yy-sy*.04);ctx.stroke()}ctx.beginPath();ctx.moveTo(-sx*.02,-sy*.80);ctx.bezierCurveTo(-sx*.18,-sy*.33,sx*.05,-sy*.02,-sx*.10,sy*.57);ctx.strokeStyle='rgba(244,201,93,.38)';ctx.stroke();ctx.fillStyle='rgba(142,165,174,.75)';ctx.font='10px system-ui';ctx.fillText('posterior',-sx*.92,sy*.85);ctx.fillText('anterior',sx*.72,sy*.85);ctx.restore()}
+  function brain3d(w,h){ctx.save();ctx.strokeStyle='rgba(107,145,157,.18)';ctx.lineWidth=.8;for(let lat=-60;lat<=60;lat+=20){ctx.beginPath();let started=false;for(let lon=0;lon<=360;lon+=5){let la=lat*Math.PI/180,lo=lon*Math.PI/180;let p=[1.02*Math.cos(la)*Math.cos(lo),.78*Math.cos(la)*Math.sin(lo),.78*Math.sin(la)],q=project3(p,w,h);if(!started){ctx.moveTo(q.x,q.y);started=true}else ctx.lineTo(q.x,q.y)}ctx.stroke()}for(let lon=0;lon<360;lon+=30){ctx.beginPath();let started=false;for(let lat=-85;lat<=85;lat+=4){let la=lat*Math.PI/180,lo=lon*Math.PI/180;let q=project3([1.02*Math.cos(la)*Math.cos(lo),.78*Math.cos(la)*Math.sin(lo),.78*Math.sin(la)],w,h);if(!started){ctx.moveTo(q.x,q.y);started=true}else ctx.lineTo(q.x,q.y)}ctx.stroke()}ctx.restore()}
+  function drawNode(n,p){let isE=n.type==='electrode',isSel=n===selected,isHover=n===hovered,col=isE?colors.electrode:colors[n.side];let r=(isE?5.5:7.5)*(mode==='3d'?Math.max(.72,p.scale):1);ctx.save();ctx.globalAlpha=visible(n)?1:opacity(n);if(!visible(n)&&opacity(n)<.2){ctx.restore();return}ctx.shadowColor=col;ctx.shadowBlur=isSel?22:isHover?15:8;if(isE){ctx.beginPath();ctx.arc(p.x,p.y,r+2.5,0,Math.PI*2);ctx.strokeStyle=col;ctx.lineWidth=isSel?3:1.5;ctx.stroke();ctx.beginPath();ctx.arc(p.x,p.y,1.7,0,Math.PI*2);ctx.fillStyle=col;ctx.fill()}else{ctx.beginPath();ctx.arc(p.x,p.y,r+(isSel?2:0),0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=isSel?2:0.7;ctx.stroke()}ctx.shadowBlur=0;if(isSel||isHover||mode==='2d'){ctx.font=(isSel?'700 ':'600 ')+'10px system-ui';ctx.fillStyle=isSel?'#fff':'#bfd0d5';ctx.fillText(n.name,p.x+r+6,p.y+3)}ctx.restore();p.r=r+8;p.node=n}
+  function draw(){let r=canvas.getBoundingClientRect(),w=r.width,h=r.height;ctx.clearRect(0,0,w,h);let grad=ctx.createRadialGradient(w*.5,h*.48,10,w*.5,h*.5,Math.max(w,h)*.55);grad.addColorStop(0,'rgba(25,53,67,.42)');grad.addColorStop(1,'rgba(9,16,24,0)');ctx.fillStyle=grad;ctx.fillRect(0,0,w,h);mode==='2d'?brain2d(w,h):brain3d(w,h);projected=[];for(const n of nodes){if(!visible(n))continue;let p=mode==='2d'?project2(n,w,h):project3(n.pos,w,h);projected.push({...p,node:n})}projected.sort((a,b)=>a.depth-b.depth);for(const p of projected)drawNode(p.node,p);}
+  function nearest(x,y){let best=null,d=1e9;for(const p of projected){let dd=Math.hypot(x-p.x,y-p.y);if(dd<(p.r||15)&&dd<d){best=p.node;d=dd}}return best}
+  function detail(n){selected=n;let col=n.type==='electrode'?colors.electrode:colors[n.side];$('nodeKicker').textContent=(n.type==='electrode'?'Scalp sensor · ':'Cortical node · ')+(n.side==='left'?'left hemisphere':n.side==='right'?'right hemisphere':n.side==='deep'?'deep network':'midline / bilateral');$('nodeKicker').style.color=col;$('nodeName').textContent=n.name;$('nodeFull').textContent=n.full;$('nodePurpose').textContent=n.purpose;$('nodeSignal').textContent=n.signal;$('nodeCaution').textContent=n.caution;$('nodeActions').innerHTML=n.actions.map(x=>`<span class="chip">${x}</span>`).join('');$('channels').innerHTML=CH.map(c=>`<div class="channel ${n.channels.includes(c)?(n.type==='electrode'?'warm':'hot'):''}">${c}</div>`).join('');$('channelNote').textContent=n.channels.length?'Most relevant current sensors: '+n.channels.join(', '):'No direct current-montage sensor.';$('nodeSources').innerHTML=n.sources.map(s=>`<a class="source" href="${s.u}" target="_blank" rel="noopener">↗ ${s.t}</a>`).join('');pathway(n);draw()}
+  function pathway(n){let text;if(n.tags.includes('reach'))text='<strong>Target / goal</strong> → SPL/PPC coordinate transform → PMd reach plan → M1/S1 hand state';else if(n.tags.includes('shape'))text='<strong>Object / desired shape</strong> → aIPS/IPL preshape → PMv/PMd configuration → M1/S1 pattern';else if(n.tags.includes('sequence'))text='<strong>Internal goal</strong> → pre-SMA/SMA sequence → premotor preparation → distributed sensorimotor pattern';else if(n.tags.includes('touch'))text='<strong>Expected contact</strong> → S1/centroparietal representation ↔ premotor/M1 kinesthetic simulation';else text='<strong>Instruction</strong> → frontoparietal selection → premotor/SMA preparation → sensorimotor rhythm change';$('pathway').innerHTML=text}
+  function tip(n,e){const t=$('tooltip');if(!n){t.classList.remove('show');return}t.querySelector('b').textContent=n.name;t.querySelector('b').style.color=n.type==='electrode'?colors.electrode:colors[n.side];t.querySelector('span').textContent=n.purpose.slice(0,105)+(n.purpose.length>105?'…':'');let x=Math.min(innerWidth-235,e.clientX+14),y=Math.min(innerHeight-90,e.clientY+14);t.style.left=x+'px';t.style.top=y+'px';t.classList.add('show')}
+  canvas.addEventListener('mousemove',e=>{let r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;if(drag&&mode==='3d'){rotY+=(x-last.x)*.008;rotX=Math.max(-1.15,Math.min(1.15,rotX+(y-last.y)*.008));last={x,y};draw();return}hovered=nearest(x,y);canvas.style.cursor=hovered?'pointer':mode==='3d'?'grab':'crosshair';tip(hovered,e);draw()});
+  canvas.addEventListener('mouseleave',()=>{hovered=null;drag=false;tip(null);draw()});canvas.addEventListener('mousedown',e=>{if(mode==='3d'&&!hovered){drag=true;let r=canvas.getBoundingClientRect();last={x:e.clientX-r.left,y:e.clientY-r.top};canvas.style.cursor='grabbing'}});window.addEventListener('mouseup',()=>drag=false);
+  canvas.addEventListener('click',e=>{let r=canvas.getBoundingClientRect(),n=nearest(e.clientX-r.left,e.clientY-r.top);if(n)detail(n)});canvas.addEventListener('wheel',e=>{if(mode==='3d'){e.preventDefault();zoom=Math.max(.65,Math.min(1.65,zoom-e.deltaY*.001));draw()}},{passive:false});
+  canvas.addEventListener('keydown',e=>{if(mode!=='3d')return;if(e.key==='ArrowLeft')rotY-=.12;if(e.key==='ArrowRight')rotY+=.12;if(e.key==='ArrowUp')rotX-=.1;if(e.key==='ArrowDown')rotX+=.1;draw()});
+  function setMode(m){mode=m;$('mode2d').classList.toggle('active',m==='2d');$('mode3d').classList.toggle('active',m==='3d');$('hemiControl').style.opacity=m==='2d'?1:.45;$('viewTitle').textContent=m==='2d'?(hemi==='left'?'Left lateral network':'Right lateral network'):'Rotatable 3D network';$('viewSub').textContent=m==='2d'?(hemi==='left'?'Right-hand motor imagery · anterior faces right':'Left-hand motor imagery · anterior faces right'):'Drag to rotate · wheel to zoom · electrodes float above cortex';$('hint').textContent=m==='2d'?'Hover a node · click to pin':'Drag empty space · hover/click nodes';draw()}
+  $('mode2d').onclick=()=>setMode('2d');$('mode3d').onclick=()=>setMode('3d');
+  document.querySelectorAll('[data-hemi]').forEach(b=>b.onclick=()=>{hemi=b.dataset.hemi;document.querySelectorAll('[data-hemi]').forEach(x=>x.classList.toggle('active',x===b));if(selected.side!=='mid'&&selected.side!=='deep'&&selected.side!==hemi)detail(nodes.find(n=>n.id===(hemi==='left'?'m1-l':'m1-r')));setMode(mode)});
+  document.querySelectorAll('.filter').forEach(b=>b.onclick=()=>{action=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>x.classList.toggle('active',x===b));draw()});
+  $('cortexLayer').onchange=e=>{showCortex=e.target.checked;draw()};$('electrodeLayer').onchange=e=>{showElectrodes=e.target.checked;draw()};$('deepLayer').onchange=e=>{showDeep=e.target.checked;draw()};$('search').oninput=e=>{query=e.target.value.trim();draw()};
+  detail(selected);resize();
+})();
+</script>
+</body>
+</html>
