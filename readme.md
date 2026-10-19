@@ -182,7 +182,12 @@ The same trained intention set can be remapped to another application's callback
 without retraining. Adding an intention creates a new calibration task set. The SDK
 accepts one to ten finger labels but warns about adjacent fingers, high class counts and
 research-only 6–10-finger profiles. Software scalability is not a claim of equal EEG
-accuracy. See `docs/MOTOR_INTENT_SDK.md` for recording, training and demo commands.
+accuracy.
+
+Rock–Paper–Scissors, Subway runner and realistic UI now include an **F2 CALIBRATE**
+tab. It configures mappings, records a Cyton block, saves the shared format and trains
+locally automatically. Dry-run rehearses the UI but saves no model. See
+`docs/MOTOR_INTENT_SDK.md` for the complete workflow.
 
 ### `BCISession` — the acquisition + decoding pipeline
 

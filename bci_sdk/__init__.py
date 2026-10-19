@@ -48,7 +48,7 @@ for _p in (str(_ROOT), str(_ROOT / "pygame_lib"), str(_ROOT / "EEG")):
     if _p not in _sys.path:
         _sys.path.insert(0, _p)
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 # ----------------------------------------------------------------- core (always)
 from ML.bci_engine import BCIEngine                                    # noqa: E402
@@ -93,6 +93,7 @@ __all__ = [
     "build_runtime", "LEFT", "RIGHT",
     # live app integration
     "LiveBCI", "ScanSelector", "SineProbe", "SineProbeModel",
+    "IntentCalibrationPanel",
     # errors
     "BCIError", "HardwareError", "CalibrationError", "NotCalibratedError",
 ]
@@ -112,6 +113,7 @@ from bci_sdk.runtime import (RealtimeDecider, ArtifactDetector,  # noqa: E402
                              build_runtime)
 from bci_sdk.live import (LiveBCI, ScanSelector, SineProbe,     # noqa: E402
                           SineProbeModel)
+from bci_sdk.intent_calibration import IntentCalibrationPanel    # noqa: E402
 
 # ------------------------------------------------------------- UI (needs pygame)
 try:

@@ -93,6 +93,12 @@ _ap.add_argument("--port", default=None)
 _ap.add_argument("--recording", default=None)
 _ap.add_argument("--scheme", choices=["tree", "scan"], default="tree")
 _ap.add_argument("--intent-map", dest="intent_map", default=None)
+_ap.add_argument("--calibration-source", choices=["dry-run", "cyton"],
+                 default="dry-run")
+_ap.add_argument("--calibration-trials", type=int, default=36)
+_ap.add_argument("--calibration-idle", type=int, default=12)
+_ap.add_argument("--calibration-cue", type=float, default=4.0)
+_ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _unknown = _ap.parse_known_args()
 if _args.intent_map:
     from ML.motor_intent import parse_intent_map
@@ -136,14 +142,55 @@ def choose(target):
     target.flash()
 
 
+from bci_sdk.live import LiveBCI
+from bci_sdk.intent_calibration import IntentCalibrationPanel
+from ML.motor_intent import BODY_INTENTS
+
 bci = None
+
+def start_bci(source=None):
+    global bci
+    selected_source = source or _args.bci
+    if not selected_source:
+        return None
+    try:
+        bci = LiveBCI(
+            targets, source=selected_source, user=_args.user,
+            serial_port=_args.port, recording=_args.recording,
+            scheme=_args.scheme, intent_map=BCI_INTENT_MAP,
+            on_select=choose, verbose=True).start()
+    except FileNotFoundError as exc:
+        print(f"[BCI not started] {exc}")
+        bci = None
+    return bci
+
+
+def stop_bci_for_calibration():
+    global bci
+    if bci is not None:
+        bci.stop(); bci = None
+
+
+def model_ready(_result):
+    global BCI_INTENT_MAP
+    BCI_INTENT_MAP = calibration.intent_map
+    if calibration.source == "cyton":
+        start_bci("intent-mi")
+
+
 if _args.bci:
-    from bci_sdk.live import LiveBCI
-    bci = LiveBCI(
-        targets, source=_args.bci, user=_args.user,
-        serial_port=_args.port, recording=_args.recording,
-        scheme=_args.scheme, intent_map=BCI_INTENT_MAP,
-        on_select=choose, verbose=True).start()
+    start_bci()
+
+calibration = IntentCalibrationPanel(
+    targets, BCI_INTENT_MAP, user=_args.user, serial_port=_args.port,
+    source=_args.calibration_source,
+    action_trials=_args.calibration_trials,
+    idle_trials=_args.calibration_idle,
+    cue_s=_args.calibration_cue, rest_s=_args.calibration_rest,
+    allowed_intents=BODY_INTENTS,
+    enabled="__bci_recorder_frame__" not in globals(),
+    on_before_record=stop_bci_for_calibration,
+    on_model_ready=model_ready)
 
 
 def layout(width, height):
@@ -171,6 +218,8 @@ try:
         now = pygame.time.get_ticks()
         dt = clock.tick(60) / 1000.0
         for event in pygame.event.get():
+            if calibration.handle_event(event):
+                continue
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
@@ -186,7 +235,10 @@ try:
                 win = pygame.display.set_mode(event.size, pygame.RESIZABLE)
                 layout(*event.size)
 
-        if bci is not None:
+        calibration.update()
+        if calibration.visible:
+            dt = 0.0
+        if bci is not None and not calibration.visible:
             bci.poll()
 
         width, height = win.get_size()
@@ -241,6 +293,7 @@ try:
             "MI profile: LEFT HAND = left · RIGHT HAND = right · BOTH FEET = jump",
             True, (150, 172, 180))
         win.blit(caption, caption.get_rect(center=(width // 2, height - 22)))
+        calibration.draw(win)
 
         recorder_frame = globals().get("__bci_recorder_frame__")
         if callable(recorder_frame):
