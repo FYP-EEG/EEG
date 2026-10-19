@@ -117,10 +117,10 @@ Each entry is (id, name, icon file, x, y) where x and y are FRACTIONS of the
 window, so the layout survives a resize. Edit these to move buttons around.
 """
 LAYOUT = [
-    (0, "inventory", "inventory.png", 0.08, 0.4),
+    (0, "inventory", "inventory.png", 0.08, 0.40),
     (1, "message",   "message.png",   0.08, 0.88),
-    (2, "shoot",     "shoot.png",     0.75, 0.7),
-    (3, "reload",    "reload.png",    0.9, 0.4),
+    (2, "shoot",     "shoot.png",     0.75, 0.70),
+    (3, "reload",    "reload.png",    0.90, 0.40),
     (4, "map",       "map.png",       0.08, 0.15),
 ]
 
@@ -227,6 +227,12 @@ _ap.add_argument("--port", default=None)
 _ap.add_argument("--recording", default=None)
 _ap.add_argument("--scheme", choices=["tree", "scan"], default="scan")
 _ap.add_argument("--intent-map", "--finger-map", dest="intent_map", default=None)
+_ap.add_argument("--calibration-source", choices=["dry-run", "cyton"],
+                 default="dry-run")
+_ap.add_argument("--calibration-trials", type=int, default=60)
+_ap.add_argument("--calibration-idle", type=int, default=12)
+_ap.add_argument("--calibration-cue", type=float, default=4.0)
+_ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _ = _ap.parse_known_args()
 
 if _args.intent_map:
@@ -234,31 +240,73 @@ if _args.intent_map:
     from ML.motor_intent import parse_intent_map
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
 
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from bci_sdk.live import LiveBCI
+from bci_sdk.intent_calibration import IntentCalibrationPanel
+from ML.motor_intent import FINGER_INTENTS
+
 bci = None
+
+def _highlight(cands):
+    for b in buttons:
+        b.stop_flash()
+    for b in cands:
+        b.flash(loop=True, waves=2, pulse_hz=0.5)
+
+
+def _choose(b):
+    global highlight
+    highlight = buttons.index(b)
+    select_highlighted()
+
+
+def _start_bci(source=None):
+    global bci
+    selected_source = source or _args.bci
+    if not selected_source:
+        return None
+    try:
+        bci = LiveBCI(
+            buttons, source=selected_source, user=_args.user,
+            serial_port=_args.port, recording=_args.recording,
+            scheme=_args.scheme, app="realistic_ui",
+            intent_map=BCI_INTENT_MAP,
+            on_select=_choose, on_change=_highlight).start()
+    except FileNotFoundError as exc:
+        print(f"[BCI not started] {exc}")
+        bci = None
+    if selected_source in ("button-mi", "intent-mi"):
+        for button in buttons:
+            button.stop_flash()
+    return bci
+
+
+def _stop_bci_for_calibration():
+    global bci
+    if bci is not None:
+        bci.stop(); bci = None
+
+
+def _model_ready(_result):
+    global BCI_INTENT_MAP
+    BCI_INTENT_MAP = calibration.intent_map
+    if calibration.source == "cyton":
+        _start_bci("intent-mi")
+
+
 if _args.bci:
-    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
-    from bci_sdk.live import LiveBCI
+    _start_bci()
 
-    def _highlight(cands):
-        for b in buttons:
-            b.stop_flash()
-        for b in cands:
-            b.flash(loop=True, waves=2, pulse_hz=0.5)
-
-    def _choose(b):
-        global highlight
-        highlight = buttons.index(b)
-        select_highlighted()
-
-    bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
-                  serial_port=_args.port, recording=_args.recording,
-                  scheme=_args.scheme, app="realistic_ui",
-                  intent_map=BCI_INTENT_MAP,
-                  on_select=_choose, on_change=_highlight).start()
-    if _args.bci in ("button-mi", "intent-mi"):
-        # Direct mode has no scan cursor; all buttons are always candidates.
-        for _button in buttons:
-            _button.stop_flash()
+calibration = IntentCalibrationPanel(
+    buttons, BCI_INTENT_MAP, user=_args.user, serial_port=_args.port,
+    source=_args.calibration_source,
+    action_trials=_args.calibration_trials,
+    idle_trials=_args.calibration_idle,
+    cue_s=_args.calibration_cue, rest_s=_args.calibration_rest,
+    allowed_intents=FINGER_INTENTS,
+    enabled="__bci_recorder_frame__" not in globals(),
+    on_before_record=_stop_bci_for_calibration,
+    on_model_ready=_model_ready)
 
 #game loop
 run = True
@@ -335,6 +383,8 @@ while run:
     draw_background(win, width, height)
 
     for e in pygame.event.get():
+        if calibration.handle_event(e):
+            continue
         if e.type == QUIT or (e.type == KEYDOWN and e.key == K_BACKSPACE):
             run = False
         elif e.type == KEYDOWN and e.key == K_LEFT:
@@ -420,11 +470,13 @@ while run:
     hint = hint_font.render(hint_text, True, (200, 208, 226))
     win.blit(hint, (20, 16))
 
-    if bci is not None:
+    calibration.update()
+    if bci is not None and not calibration.visible:
         bci.poll()                                  # non-blocking
 
     for button in buttons:
         button.draw(win)
+    calibration.draw(win)
 
     """
     Edited by Anson
@@ -444,4 +496,6 @@ while run:
     #cap at 60 FPS so animations run at a visible speed
     clock.tick(60)
 
+if bci is not None:
+    bci.stop()
 pygame.quit()

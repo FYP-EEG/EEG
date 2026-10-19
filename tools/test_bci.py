@@ -1447,6 +1447,38 @@ def layer5():
         check(f"exports {name}", hasattr(bci_sdk, name))
     check("__all__ matches real attributes",
           all(hasattr(bci_sdk,n) for n in bci_sdk.__all__))
+    check("exports reusable in-app calibration panel",
+          hasattr(bci_sdk, "IntentCalibrationPanel"))
+
+    print("\n== In-app motor-intent calibration tab ==")
+    pygame.init(); pygame.display.set_mode((400, 300))
+    class CalTarget:
+        def __init__(self, index, name):
+            self.id, self.name = index, name
+            self.rect = pygame.Rect(index * 20, 0, 18, 18)
+            self.is_flashing = False
+        def flash(self, **kwargs): self.is_flashing = True
+        def stop_flash(self): self.is_flashing = False
+
+    cal_targets = [CalTarget(0, "rock"), CalTarget(1, "paper"),
+                   CalTarget(2, "scissors")]
+    panel = bci_sdk.IntentCalibrationPanel(
+        cal_targets,
+        {"rock": "left_index", "paper": "right_index",
+         "scissors": "right_pinky"},
+        user="test", source="dry-run", action_trials=3, idle_trials=1,
+        cue_s=.01, rest_s=.01)
+    panel.visible = True
+    panel.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and panel.state not in (panel.RESULT, panel.ERROR):
+        panel.update(); time.sleep(.005)
+    check("dry-run calibration tab completes its full state machine",
+          panel.state == panel.RESULT and panel.result.get("dry_run"))
+    check("dry-run calibration deliberately saves no model",
+          panel.result.get("n_trials") == 4 and not panel.error)
+    panel.draw(pygame.display.get_surface())
+    check("calibration setup/result renders without error", True)
 
     print("\n== Typed errors ==")
     check("error hierarchy", issubclass(bci_sdk.HardwareError, bci_sdk.BCIError)

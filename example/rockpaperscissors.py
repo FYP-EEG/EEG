@@ -130,6 +130,12 @@ _ap.add_argument("--scheme", choices=["tree", "scan"], default="tree")
 _ap.add_argument("--intent-map", "--finger-map", dest="intent_map", default=None,
                  help="action=intent pairs, e.g. "
                       "rock=left_index,paper=right_index,scissors=right_pinky")
+_ap.add_argument("--calibration-source", choices=["dry-run", "cyton"],
+                 default="dry-run")
+_ap.add_argument("--calibration-trials", type=int, default=36)
+_ap.add_argument("--calibration-idle", type=int, default=12)
+_ap.add_argument("--calibration-cue", type=float, default=4.0)
+_ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _ = _ap.parse_known_args()
 
 if _args.intent_map:
@@ -137,28 +143,72 @@ if _args.intent_map:
     from ML.motor_intent import parse_intent_map
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from bci_sdk.live import LiveBCI
+from bci_sdk.intent_calibration import IntentCalibrationPanel
+from ML.motor_intent import FINGER_INTENTS
+
 bci = None
+
+def _highlight(cands):
+    for b in buttons:
+        b.stop_flash()
+    for b in cands:
+        b.flash(loop=True, waves=2, pulse_hz=0.5)
+
+
+def _choose(b):
+    b.click()                                       # runs pick_rock() etc.
+    for o in buttons:
+        o.stop_flash()
+    b.flash(duration=4.0, waves=2)
+
+
+def _start_bci(source=None):
+    global bci
+    selected_source = source or _args.bci
+    if not selected_source:
+        return None
+    try:
+        bci = LiveBCI(
+            buttons, source=selected_source, user=_args.user,
+            serial_port=_args.port, recording=_args.recording,
+            scheme=_args.scheme, app="rockpaperscissors",
+            intent_map=BCI_INTENT_MAP,
+            on_select=_choose, on_change=_highlight).start()
+    except FileNotFoundError as exc:
+        print(f"[BCI not started] {exc}")
+        bci = None
+    return bci
+
+
+def _stop_bci_for_calibration():
+    global bci
+    if bci is not None:
+        bci.stop()
+        bci = None
+
+
+def _model_ready(_result):
+    global BCI_INTENT_MAP
+    BCI_INTENT_MAP = calibration.intent_map
+    if calibration.source == "cyton":
+        _start_bci("intent-mi")
+
+
 if _args.bci:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from bci_sdk.live import LiveBCI
+    _start_bci()
 
-    def _highlight(cands):
-        for b in buttons:
-            b.stop_flash()
-        for b in cands:
-            b.flash(loop=True, waves=2, pulse_hz=0.5)
-
-    def _choose(b):
-        b.click()                                   # runs pick_rock() etc.
-        for o in buttons:
-            o.stop_flash()
-        b.flash(duration=4.0, waves=2)
-
-    bci = LiveBCI(buttons, source=_args.bci, user=_args.user,
-                  serial_port=_args.port, recording=_args.recording,
-                  scheme=_args.scheme, app="rockpaperscissors",
-                  intent_map=BCI_INTENT_MAP,
-                  on_select=_choose, on_change=_highlight).start()
+calibration = IntentCalibrationPanel(
+    buttons, BCI_INTENT_MAP, user=_args.user, serial_port=_args.port,
+    source=_args.calibration_source,
+    action_trials=_args.calibration_trials,
+    idle_trials=_args.calibration_idle,
+    cue_s=_args.calibration_cue, rest_s=_args.calibration_rest,
+    allowed_intents=FINGER_INTENTS,
+    enabled="__bci_recorder_frame__" not in globals(),
+    on_before_record=_stop_bci_for_calibration,
+    on_model_ready=_model_ready)
 
 cursor = ""
 cursorUpdate = False
@@ -201,6 +251,8 @@ while run:
     win.fill((50,50,50))
 
     for e in pygame.event.get():
+        if calibration.handle_event(e):
+            continue
         if e.type == QUIT or (e.type == KEYDOWN and e.key == K_BACKSPACE):
             run = False
         elif e.type == VIDEORESIZE:
@@ -239,7 +291,8 @@ while run:
                 cursor = e.pos
                 cursorUpdate = True
 
-    if bci is not None:
+    calibration.update()
+    if bci is not None and not calibration.visible:
         bci.poll()                                  # non-blocking
 
     """
@@ -285,6 +338,7 @@ while run:
     _buttons_started = _time.perf_counter()
     for button in buttons:
         button.draw(win)
+    calibration.draw(win)
     _buttons_ms = (_time.perf_counter() - _buttons_started) * 1000.0
 
     """
@@ -321,4 +375,6 @@ while run:
                   f"flip={_flip_ms:.1f}ms tick={_tick_ms:.1f}ms",
                   flush=True)
 
+if bci is not None:
+    bci.stop()
 pygame.quit()
