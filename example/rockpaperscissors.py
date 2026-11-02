@@ -19,8 +19,16 @@ script_dir = Path(__file__).resolve().parent
 lib_path = script_dir.parent / "pygame_lib"
 # 3. Add it to sys.path
 sys.path.insert(0, str(lib_path))
-# 4. Import the module
+project_root = script_dir.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+# Load the SDK before opening a pygame window. On Windows, scipy/sklearn imports
+# can take several seconds; opening the display first makes the OS report that
+# the example is unresponsive even though Python is only importing modules.
 from Button import Button
+from bci_sdk.live import LiveBCI
+from bci_sdk.intent_calibration import IntentCalibrationPanel
+from ML.motor_intent import FINGER_INTENTS, parse_intent_map
 
 """
 sprite: 2d obj displayed on screen
@@ -139,14 +147,7 @@ _ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _ = _ap.parse_known_args()
 
 if _args.intent_map:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from ML.motor_intent import parse_intent_map
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from bci_sdk.live import LiveBCI
-from bci_sdk.intent_calibration import IntentCalibrationPanel
-from ML.motor_intent import FINGER_INTENTS
 
 bci = None
 

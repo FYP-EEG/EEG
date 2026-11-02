@@ -37,8 +37,15 @@ script_dir = Path(__file__).resolve().parent
 lib_path = script_dir.parent / "pygame_lib"
 # 3. Add it to sys.path
 sys.path.insert(0, str(lib_path))
-# 4. Import the module
+project_root = script_dir.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+# Import the SDK before display creation so Windows never sees an opened but
+# temporarily unpumped window while scipy/sklearn are loading.
 from Button import Button
+from bci_sdk.live import LiveBCI
+from bci_sdk.intent_calibration import IntentCalibrationPanel
+from ML.motor_intent import FINGER_INTENTS, parse_intent_map
 
 """
 sprite: 2d obj displayed on screen
@@ -216,8 +223,6 @@ SDK reports class-count and adjacent-finger accuracy warnings at startup.
     python example/realistic_ui.py --bci intent-mi --user anson --port COM4
 """
 import argparse
-import sys as _sys
-from pathlib import Path as _Path
 
 _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi",
@@ -236,14 +241,7 @@ _ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _ = _ap.parse_known_args()
 
 if _args.intent_map:
-    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
-    from ML.motor_intent import parse_intent_map
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
-
-_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
-from bci_sdk.live import LiveBCI
-from bci_sdk.intent_calibration import IntentCalibrationPanel
-from ML.motor_intent import FINGER_INTENTS
 
 bci = None
 
