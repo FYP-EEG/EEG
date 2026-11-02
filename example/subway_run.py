@@ -30,6 +30,12 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Load heavy scientific modules before opening the display; otherwise Windows
+# may mark the new window unresponsive while imports are still running.
+from bci_sdk.live import LiveBCI
+from bci_sdk.intent_calibration import IntentCalibrationPanel
+from ML.motor_intent import BODY_INTENTS, parse_intent_map
+
 pygame.init()
 win = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
 pygame.display.set_caption("Motor Intent Runner")
@@ -101,7 +107,6 @@ _ap.add_argument("--calibration-cue", type=float, default=4.0)
 _ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _unknown = _ap.parse_known_args()
 if _args.intent_map:
-    from ML.motor_intent import parse_intent_map
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
 
 lane = 1
@@ -141,10 +146,6 @@ def choose(target):
         item.stop_flash()
     target.flash()
 
-
-from bci_sdk.live import LiveBCI
-from bci_sdk.intent_calibration import IntentCalibrationPanel
-from ML.motor_intent import BODY_INTENTS
 
 bci = None
 
