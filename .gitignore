@@ -11,3 +11,4 @@ EEG/test_udp.py
 logbook/
 dep.pyprofiles/
 profiles/
+dry_runs/

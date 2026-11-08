@@ -30,7 +30,7 @@ from ML.mi_advanced import make_riemannian, make_riemannian_lr
 from ML.motor_intent import (IDLE, INTENT_LABEL_PREFIX, MotorIntentMap,
                              assess_intent_set, canonical_intents,
                              intent_profile_dir, make_intent_label,
-                             parse_intent_label)
+                             parse_intent_label, universal_profile_dir)
 
 INTENT_PIPELINES = {
     "riemann_svm": make_riemannian,
@@ -44,16 +44,20 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.55
 def load_intent_data(user, intents, root=None):
     wanted = canonical_intents(intents)
     directory = intent_profile_dir(user, wanted, root=root)
-    files = sorted(glob.glob(str(directory / "calib_*.npz")))
+    exact_files = sorted(glob.glob(str(directory / "calib_*.npz")))
+    universal_dir = universal_profile_dir(user, root=root)
+    universal_files = sorted(glob.glob(str(universal_dir / "calib_*.npz")))
+    files = [(path, "task") for path in exact_files]
+    files += [(path, "universal") for path in universal_files]
     if not files:
         raise FileNotFoundError(
-            f"No motor-intent recordings in {directory}. Record this exact "
-            f"task set first with EEG/data_record.py --intent-mi.")
+            f"No task-specific recordings in {directory} and no reusable "
+            f"universal recordings in {universal_dir}.")
 
     wanted_labels = {make_intent_label(v) for v in wanted}
     sessions, all_labels = [], set()
     fs_values, montages = set(), set()
-    for path in files:
+    for path, source in files:
         with np.load(path, allow_pickle=True) as data:
             X = data["X"].astype(np.float64)
             labels = data["labels"].astype(str)
@@ -62,12 +66,20 @@ def load_intent_data(user, intents, root=None):
                 continue
             X, labels = X[mask], labels[mask]
             decoded = [parse_intent_label(v) for v in labels]
-            unexpected = set(decoded) - set(wanted) - {IDLE}
-            if unexpected:
-                raise ValueError(
-                    f"{Path(path).name} contains a different task set: "
-                    f"{sorted(unexpected)}")
-            sessions.append((Path(path).name, X, labels))
+            if source == "universal":
+                keep = np.array([v in set(wanted) or v == IDLE for v in decoded])
+                X, labels = X[keep], labels[keep]
+                decoded = [v for v, use in zip(decoded, keep) if use]
+                if not len(X):
+                    continue
+            else:
+                unexpected = set(decoded) - set(wanted) - {IDLE}
+                if unexpected:
+                    raise ValueError(
+                        f"{Path(path).name} contains a different task set: "
+                        f"{sorted(unexpected)}")
+            display_name = f"{source}/{Path(path).name}"
+            sessions.append((display_name, X, labels))
             all_labels.update(labels.tolist())
             fs_values.add(int(data["fs"]))
             montages.add(str(data["montage"]))

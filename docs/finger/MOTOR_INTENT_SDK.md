@@ -30,6 +30,69 @@ profiles/<user>/motor_intent/<task-set>/
 
 Changing action names without changing the motor-intent set does not require retraining. Adding/removing a motor intention creates a different task set and requires calibration.
 
+## Universal reusable body-intent recording
+
+The recommended first recording collects a shared pool containing all ten fingers,
+left hand, right hand, both feet, and idle. It uses an asset-free pygame body map;
+the cued finger, whole hand, or both feet change colour while the real body remains
+still.
+
+```bash
+python EEG/data_record.py --intent-mi --subject anson \
+  --trials-per-intent 8 --universal-idle 15 --cue 4 --rest 2 \
+  --board-id 0 --serial-port COM4
+```
+
+This records 13 active intentions x 8 trials plus 15 idle trials (119 total) into:
+
+```text
+profiles/anson/motor_intent/_universal_13/calib_anson_*.npz
+```
+
+The universal recording is a reusable labelled data pool, not one forced 14-class
+runtime model. Each application trains a smaller task-specific model by filtering the
+intentions it needs. App-specific calibration blocks are combined with the reusable
+pool automatically.
+
+Running the same command with `--dry-run` writes only under `dry_runs/` and prints a
+warning not to train from synthetic data.
+
+## Start page and in-app Calibration page
+
+All three demos open on a two-choice **GAME / CALIBRATION** landing page. Both choices
+are mouse-clickable; use Left/Right and Enter from the keyboard. Choosing Calibration
+opens the reusable calibration panel, which shows the action-to-body mapping on the
+same two-hand/two-feet diagram.
+
+The Calibration page provides the complete local flow:
+
+1. Review each application action and assigned motor intention.
+2. Use Up/Down to choose an action and Left/Right to change its intention.
+3. Press D or click SOURCE to choose DRY RUN or CYTON.
+4. Press Enter/START CALIBRATION.
+5. Follow the in-app cues; no physical movement or clicking is required.
+6. The Cyton recording is saved and training starts automatically.
+7. The result page shows pipeline, held-out accuracy, session count and reliability.
+
+Launch a real calibration directly inside RPS:
+
+```bash
+python example/rockpaperscissors.py --user anson --port COM4 \
+  --calibration-source cyton
+```
+
+Use F2, then Enter. The tab stops a running BCI before opening the board and, after successful real training, can restart `intent-mi`. A dry run checks only timing/UI and deliberately saves no EEG model. One block trains a usable experimental model but cannot produce a trustworthy session-held-out score; record at least three separate blocks. During training, the loader combines the selected app-specific labels with matching trials from the reusable `_universal_13` pool.
+
+Default in-app block sizes provide screening headroom:
+
+```text
+RPS:          36 action + 12 idle (12 per action)
+Subway:       36 action + 12 idle (12 per action)
+Realistic UI: 60 action + 12 idle (12 per action)
+```
+
+The external `EEG/data_record.py --intent-mi` workflow remains available for lab scripting and reproducible command-line sessions.
+
 ## Supported intentions
 
 ```text

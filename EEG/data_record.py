@@ -41,9 +41,13 @@ MODES
        py EEG/data_record.py --file rockpaperscissors --button-mi \
             --button-hand right --subject anson --trials 90 --cue 4
 
-5. Recommended reusable motor-intent calibration:
+5. Universal reusable motor-intent pool (10 fingers + two hands + both feet):
+       py EEG/data_record.py --intent-mi --subject anson \
+            --trials-per-intent 8 --universal-idle 15 --cue 4
+
+6. App-specific intent calibration (combined with the universal pool at train time):
        py EEG/data_record.py --file rockpaperscissors --intent-mi \
-            --subject anson --trials 90 --idle-trials 15 --cue 4
+            --subject anson --trials 36 --idle-trials 12 --cue 4
 
 WHY CUED RECORDING
 ------------------
@@ -885,9 +889,14 @@ def run_example(args):
                        idle_trials=args.idle_trials,
                        button_hand=args.button_hand, capture=capture)
     if capture_mode and args.cue < 3.0:
-        print(f"  WARNING: cue {args.cue}s is shorter than the 3.0s epoch "
-              f"window, so most of every epoch would be rest. Use --cue 4 "
-              f"or more.")
+        if args.dry_run:
+            print(f"  UI-ONLY DRY RUN: cue {args.cue:g}s is intentionally "
+                  "shorter than the 3.0s training epoch; no real model should "
+                  "use this synthetic rehearsal.")
+        else:
+            print(f"  WARNING: cue {args.cue}s is shorter than the 3.0s epoch "
+                  f"window, so most of every epoch would be rest. Use --cue 4 "
+                  f"or more.")
 
     print(f"\nRunning {script.name}")
     if args.intent_mi:
@@ -1202,12 +1211,18 @@ def run_example(args):
             else:
                 if args.out:
                     out = Path(args.out)
+                elif args.dry_run:
+                    out = (ROOT / "dry_runs" / script.stem /
+                           str(args.subject).lower())
                 elif args.button_mi:
                     from ML.button_mi import button_profile_dir
                     out = button_profile_dir(args.subject, script.stem)
                 elif args.intent_mi:
                     api = _load_motor_intent_api()
-                    out = api.intent_profile_dir(args.subject, rec.intent_values)
+                    if args.universal_pool:
+                        out = api.universal_profile_dir(args.subject)
+                    else:
+                        out = api.intent_profile_dir(args.subject, rec.intent_values)
                 else:
                     out = ROOT / "profiles" / args.subject.lower()
                 npz = save_session(X, y, labels, args.subject, capture.fs,
@@ -1225,10 +1240,18 @@ def run_example(args):
                               for name, index in rec.intent_class.items()]
                     print(f"  {len(X)} reusable motor-intent epochs  (" +
                           " / ".join(f"{name} {n}" for name, n in counts) + ")")
-                    print(f"  intent calibration -> {npz}")
-                    joined = ",".join(rec.intent_values)
-                    print(f"  next:  python ML/train_intent_mi.py "
-                          f"{args.subject} --intents {joined}")
+                    if args.dry_run:
+                        print(f"  synthetic rehearsal -> {npz}")
+                        print("  WARNING: do not train a real model from dry-run data")
+                    elif args.universal_pool:
+                        print(f"  universal reusable pool -> {npz}")
+                        print("  examples can now record extra app-specific "
+                              "calibration and train subsets from this pool")
+                    else:
+                        print(f"  intent calibration -> {npz}")
+                        joined = ",".join(rec.intent_values)
+                        print(f"  next:  python ML/train_intent_mi.py "
+                              f"{args.subject} --intents {joined}")
                 else:
                     n0 = int((y == 0).sum()); n1 = int((y == 1).sum())
                     print(f"  {len(X)} epochs  (LEFT {n0} / RIGHT {n1})")
@@ -1390,7 +1413,12 @@ def cli():
         description="Record EEG while running an example app with cued targets")
     ap.add_argument("--file", default=None,
                     help="script in example/ to run, e.g. rockpaperscissors")
-    ap.add_argument("--trials", type=int, default=10, help="number of cued trials")
+    ap.add_argument("--trials", type=int, default=10,
+                    help="number of action trials for app-specific recording")
+    ap.add_argument("--trials-per-intent", type=int, default=8,
+                    help="universal body-map trials per active intention (default 8)")
+    ap.add_argument("--universal-idle", type=int, default=15,
+                    help="idle trials in universal body-map recording (default 15)")
     ap.add_argument("--cue", type=float, default=5.0, help="seconds per cue")
     ap.add_argument("--rest", type=float, default=2.0, help="seconds between cues")
     ap.add_argument("--board-id", type=int, default=-2,
@@ -1425,6 +1453,7 @@ def cli():
                     help="print a 1 Hz recorder heartbeat, phase transitions, "
                          "frame-hook activity and capture-thread state")
     args = ap.parse_args()
+    args.universal_pool = False
 
     if args.list:
         print("Scripts in example/:")
@@ -1433,7 +1462,29 @@ def cli():
                 print("  ", p.stem)
         return 0
 
+    if args.intent_mi and not args.file:
+        api = _load_motor_intent_api()
+        args.file = "body_intent_calibration"
+        args.universal_pool = True
+        args.trials = len(api.UNIVERSAL_INTENTS) * args.trials_per_intent
+        args.idle_trials = args.universal_idle
+        total_trials = args.trials + args.idle_trials
+        protocol_seconds = total_trials * (args.cue + args.rest) + 2.0
+        minutes, seconds = divmod(int(round(protocol_seconds)), 60)
+        print("Universal reusable recording mode: "
+              f"{len(api.UNIVERSAL_INTENTS)} intentions x "
+              f"{args.trials_per_intent} trials + {args.idle_trials} idle",
+              flush=True)
+        print(f"Estimated protocol time: {minutes}m {seconds:02d}s "
+              f"({total_trials} trials x "
+              f"{args.cue:g}s cue/{args.rest:g}s rest)", flush=True)
+        if args.dry_run and protocol_seconds > 120:
+            print("DRY-RUN NOTE: this rehearses the full real-time protocol. "
+                  "For a quick UI smoke test use 1 trial per intent, 1 idle, "
+                  "--cue .5 and --rest .1.", flush=True)
+        return run_example(args)
     if args.file:
+        args.universal_pool = Path(args.file).stem == "body_intent_calibration"
         return run_example(args)
     main()
     return 0
