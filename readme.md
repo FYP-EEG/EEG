@@ -184,10 +184,12 @@ accepts one to ten finger labels but warns about adjacent fingers, high class co
 research-only 6–10-finger profiles. Software scalability is not a claim of equal EEG
 accuracy.
 
-Rock–Paper–Scissors, Subway runner and realistic UI now include an **F2 CALIBRATE**
-tab. It configures mappings, records a Cyton block, saves the shared format and trains
-locally automatically. Dry-run rehearses the UI but saves no model. See
-`docs/MOTOR_INTENT_SDK.md` for the complete workflow.
+Rock–Paper–Scissors, Subway runner and realistic UI open on mouse/keyboard **GAME /
+CALIBRATION** choices. The Calibration page teaches each action on a two-hand/two-feet
+map, records a Cyton block and trains locally. A separate universal `data_record.py
+--intent-mi` body-map session collects all ten fingers, left/right hand and both feet;
+application models reuse only the required labels. Dry-run rehearses the UI without
+contaminating the real profile. See `docs/MOTOR_INTENT_SDK.md` for the complete workflow.
 
 ### `BCISession` — the acquisition + decoding pipeline
 

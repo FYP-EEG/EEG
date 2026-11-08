@@ -802,9 +802,10 @@ def layer3():
 
     print("\n== Reusable scalable motor-intent profiles ==")
     from ML.motor_intent import (MotorIntentMap, MotorIntentModel,
-        FINGER_INTENTS, assess_intent_set, intent_profile_dir,
-        make_intent_label, parse_intent_map, task_set_key)
-    from ML.train_intent_mi import train_intent_user
+        FINGER_INTENTS, UNIVERSAL_INTENTS, assess_intent_set,
+        intent_profile_dir, universal_profile_dir, make_intent_label,
+        parse_intent_map, task_set_key)
+    from ML.train_intent_mi import train_intent_user, load_intent_data
 
     default_map = MotorIntentMap({
         "rock": "left_index", "paper": "right_index",
@@ -827,6 +828,32 @@ def layer3():
     check("all ten fingers are accepted but marked research-only",
           ten["count"] == 10 and ten["difficulty"] == "RESEARCH_ONLY" and
           len(ten["warnings"]) >= 2)
+    check("universal recording vocabulary is ten fingers plus 3 body tasks",
+          len(UNIVERSAL_INTENTS) == 13 and
+          set(UNIVERSAL_INTENTS[-3:]) == {"left_hand", "right_hand", "both_feet"})
+
+    with tempfile.TemporaryDirectory() as pool_tmp_text:
+        pool_root = Path(pool_tmp_text)
+        pool_dir = universal_profile_dir("demo", root=pool_root)
+        pool_dir.mkdir(parents=True)
+        prng = np.random.default_rng(999)
+        pX, pL = [], []
+        for class_i, intent in enumerate((*UNIVERSAL_INTENTS, "idle")):
+            for _ in range(8):
+                epoch = prng.normal(0, 5, (8, 750))
+                epoch[1 + class_i % 7] *= .2
+                pX.append(epoch); pL.append(make_intent_label(intent))
+        np.savez_compressed(pool_dir / "calib_universal_0.npz",
+                            X=pX, y=np.arange(len(pX)), labels=pL,
+                            fs=250, montage="cyton8_motor")
+        pooled = load_intent_data(
+            "demo", ["left_index", "right_index", "right_pinky"],
+            root=pool_root)
+        check("task model filters its subset from the reusable universal pool",
+              set(pooled["class_map"].values()) ==
+              {"left_index", "right_index", "right_pinky", "idle"} and
+              pooled["X"].shape[0] == 32 and
+              pooled["files"] == ["universal/calib_universal_0.npz"])
 
     with tempfile.TemporaryDirectory() as intent_tmp_text:
         intent_root = Path(intent_tmp_text)
@@ -1449,9 +1476,86 @@ def layer5():
           all(hasattr(bci_sdk,n) for n in bci_sdk.__all__))
     check("exports reusable in-app calibration panel",
           hasattr(bci_sdk, "IntentCalibrationPanel"))
+    check("exports body map and Game/Calibration landing menu",
+          hasattr(bci_sdk, "draw_body_intent_map") and
+          hasattr(bci_sdk, "GameCalibrationMenu"))
+
+    # A fresh universal-recorder process needs only the motor-intent vocabulary
+    # and body-map renderer. Importing either must not drag in the scientific
+    # training stack before the pygame window can open.
+    import subprocess
+    lazy_probe = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; from ML import motor_intent; "
+         "from bci_sdk.body_map import draw_body_intent_map; "
+         "print(int('scipy' in sys.modules), int('sklearn' in sys.modules))"],
+        cwd=ROOT, text=True, capture_output=True, timeout=30)
+    check("recorder startup imports avoid eager scipy/sklearn loading",
+          lazy_probe.returncode == 0 and lazy_probe.stdout.strip() == "0 0",
+          lazy_probe.stderr or lazy_probe.stdout)
 
     print("\n== In-app motor-intent calibration tab ==")
-    pygame.init(); pygame.display.set_mode((400, 300))
+    pygame.init(); pygame.display.set_mode((800, 600))
+    menu = bci_sdk.GameCalibrationMenu("TEST")
+    menu.draw(pygame.display.get_surface())
+    menu.handle_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHT))
+    menu_choice = menu.handle_event(
+        pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN))
+    check("landing menu supports Right + Enter calibration selection",
+          menu_choice == "calibration")
+    body_probe = pygame.Surface((600, 430))
+    body_probe.fill((9, 20, 29))
+    bci_sdk.draw_body_intent_map(
+        body_probe, pygame.Rect(0, 0, 600, 430), "right_index")
+    body_rgb = pygame.surfarray.array3d(body_probe)
+    active_pixels = np.all(body_rgb == np.array((244, 201, 93)), axis=2)
+    check("anatomical two-hand/both-feet map renders a clear finger highlight",
+          int(active_pixels.sum()) > 200)
+    for intent in ("left_thumb", "left_pinky", "right_thumb", "right_pinky",
+                   "left_hand", "right_hand", "both_feet", "idle"):
+        compact_probe = pygame.Surface((300, 260))
+        compact_probe.fill((9, 20, 29))
+        bci_sdk.draw_body_intent_map(
+            compact_probe, compact_probe.get_rect(), intent, compact=True)
+    check("CC0 outline map renders hands, all edge fingers, and soles compactly",
+          True)
+
+    # Regression for both earlier failures: a selected finger must be filled,
+    # and its mask must share no pixel with any neighbouring finger or palm.
+    import bci_sdk.body_map as body_map_module
+    body_assets = body_map_module._load_assets(pygame)
+    body_colors = ((34, 62, 75), (220, 232, 235), (244, 201, 93))
+    outline_pixels = (pygame.surfarray.array_alpha(
+        body_assets["hand_outline"]) > 24)
+    finger_pixels = {
+        finger: (pygame.surfarray.array_alpha(
+            body_assets[f"finger_{finger}"]) > 0)
+        for finger in body_map_module._FINGER_MASK_ASSETS
+    }
+    overlaps = []
+    finger_names = list(finger_pixels)
+    for first_index, first in enumerate(finger_names):
+        for second in finger_names[first_index + 1:]:
+            overlaps.append(int((finger_pixels[first]
+                                 & finger_pixels[second]).sum()))
+    check("finger highlight masks are mutually exclusive (zero overlap)",
+          max(overlaps, default=0) == 0, f"overlaps={overlaps}")
+
+    finger_coverages = []
+    for finger in finger_names:
+        rendered = body_map_module._render_hand(
+            pygame, "left", finger, False, body_colors)
+        expected_pixels = finger_pixels[finger] & ~outline_pixels
+        rendered_rgb = pygame.surfarray.array3d(rendered)
+        gold_pixels = np.all(
+            rendered_rgb == np.array((244, 201, 93)), axis=2)
+        finger_coverages.append(
+            float((gold_pixels & expected_pixels).sum())
+            / max(1, int(expected_pixels.sum())))
+    check("selected highlight fills every finger interior (all >95%)",
+          all(value > .95 for value in finger_coverages),
+          f"coverage={finger_coverages}")
+
     class CalTarget:
         def __init__(self, index, name):
             self.id, self.name = index, name

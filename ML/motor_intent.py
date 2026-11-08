@@ -51,6 +51,9 @@ FINGER_INTENTS = tuple(
     f"{side}_{finger}" for side in ("left", "right") for finger in FINGER_NAMES)
 BODY_INTENTS = ("left_hand", "right_hand", "both_hands",
                 "left_foot", "right_foot", "both_feet")
+# Reusable all-body recording requested for the shared data pool: ten fingers,
+# gross left/right hand imagery, and bilateral feet/jump imagery.
+UNIVERSAL_INTENTS = FINGER_INTENTS + ("left_hand", "right_hand", "both_feet")
 VALID_INTENTS = FINGER_INTENTS + BODY_INTENTS + (IDLE,)
 _CANONICAL_ORDER = {name: i for i, name in enumerate(VALID_INTENTS)}
 
@@ -156,6 +159,12 @@ def task_set_key(intents):
 def intent_profile_dir(user, intents, root=None):
     base = Path(root) if root is not None else PROFILES
     return base / _slug(user) / "motor_intent" / task_set_key(intents)
+
+
+def universal_profile_dir(user, root=None):
+    """Shared labelled pool from the 13-intention body-map recorder."""
+    base = Path(root) if root is not None else PROFILES
+    return base / _slug(user) / "motor_intent" / "_universal_13"
 
 
 def adjacent_finger_pairs(intents):

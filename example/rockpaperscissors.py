@@ -28,6 +28,7 @@ if str(project_root) not in sys.path:
 from Button import Button
 from bci_sdk.live import LiveBCI
 from bci_sdk.intent_calibration import IntentCalibrationPanel
+from bci_sdk.start_menu import GameCalibrationMenu
 from ML.motor_intent import FINGER_INTENTS, parse_intent_map
 
 """
@@ -197,9 +198,6 @@ def _model_ready(_result):
         _start_bci("intent-mi")
 
 
-if _args.bci:
-    _start_bci()
-
 calibration = IntentCalibrationPanel(
     buttons, BCI_INTENT_MAP, user=_args.user, serial_port=_args.port,
     source=_args.calibration_source,
@@ -210,6 +208,9 @@ calibration = IntentCalibrationPanel(
     enabled="__bci_recorder_frame__" not in globals(),
     on_before_record=_stop_bci_for_calibration,
     on_model_ready=_model_ready)
+start_menu = GameCalibrationMenu("ROCK · PAPER · SCISSORS")
+if "__bci_recorder_frame__" in globals():
+    start_menu.visible = False
 
 cursor = ""
 cursorUpdate = False
@@ -252,10 +253,22 @@ while run:
     win.fill((50,50,50))
 
     for e in pygame.event.get():
+        if e.type == QUIT or (e.type == KEYDOWN and e.key in
+                              (K_BACKSPACE, K_ESCAPE)):
+            run = False
+            continue
+        if start_menu.visible:
+            choice = start_menu.handle_event(e)
+            if choice == "game":
+                start_menu.visible = False
+                if _args.bci and bci is None:
+                    _start_bci()
+            elif choice == "calibration":
+                start_menu.visible = False
+                calibration.visible = True
+            continue
         if calibration.handle_event(e):
             continue
-        if e.type == QUIT or (e.type == KEYDOWN and e.key == K_BACKSPACE):
-            run = False
         elif e.type == VIDEORESIZE:
             #get window size
             width, height = e.size#ie 800*600,height*0.9=540
@@ -340,6 +353,7 @@ while run:
     for button in buttons:
         button.draw(win)
     calibration.draw(win)
+    start_menu.draw(win)
     _buttons_ms = (_time.perf_counter() - _buttons_started) * 1000.0
 
     """

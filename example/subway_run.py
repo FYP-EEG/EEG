@@ -34,6 +34,7 @@ if str(ROOT) not in sys.path:
 # may mark the new window unresponsive while imports are still running.
 from bci_sdk.live import LiveBCI
 from bci_sdk.intent_calibration import IntentCalibrationPanel
+from bci_sdk.start_menu import GameCalibrationMenu
 from ML.motor_intent import BODY_INTENTS, parse_intent_map
 
 pygame.init()
@@ -179,9 +180,6 @@ def model_ready(_result):
         start_bci("intent-mi")
 
 
-if _args.bci:
-    start_bci()
-
 calibration = IntentCalibrationPanel(
     targets, BCI_INTENT_MAP, user=_args.user, serial_port=_args.port,
     source=_args.calibration_source,
@@ -192,6 +190,9 @@ calibration = IntentCalibrationPanel(
     enabled="__bci_recorder_frame__" not in globals(),
     on_before_record=stop_bci_for_calibration,
     on_model_ready=model_ready)
+start_menu = GameCalibrationMenu("MOTOR INTENT RUNNER")
+if "__bci_recorder_frame__" in globals():
+    start_menu.visible = False
 
 
 def layout(width, height):
@@ -219,11 +220,23 @@ try:
         now = pygame.time.get_ticks()
         dt = clock.tick(60) / 1000.0
         for event in pygame.event.get():
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and
+                    event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE)):
+                running = False
+                continue
+            if start_menu.visible:
+                choice = start_menu.handle_event(event)
+                if choice == "game":
+                    start_menu.visible = False
+                    if _args.bci and bci is None:
+                        start_bci()
+                elif choice == "calibration":
+                    start_menu.visible = False
+                    calibration.visible = True
+                continue
             if calibration.handle_event(event):
                 continue
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.KEYDOWN:
+            if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
                     running = False
                 elif event.key in (pygame.K_LEFT, pygame.K_a):
@@ -237,7 +250,7 @@ try:
                 layout(*event.size)
 
         calibration.update()
-        if calibration.visible:
+        if calibration.visible or start_menu.visible:
             dt = 0.0
         if bci is not None and not calibration.visible:
             bci.poll()
@@ -295,6 +308,7 @@ try:
             True, (150, 172, 180))
         win.blit(caption, caption.get_rect(center=(width // 2, height - 22)))
         calibration.draw(win)
+        start_menu.draw(win)
 
         recorder_frame = globals().get("__bci_recorder_frame__")
         if callable(recorder_frame):

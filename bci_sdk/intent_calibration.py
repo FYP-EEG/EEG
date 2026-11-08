@@ -21,6 +21,7 @@ from ML.motor_intent import (BODY_INTENTS, FINGER_INTENTS, IDLE,
                              canonical_intents, intent_display_name,
                              intent_instruction, intent_profile_dir,
                              make_intent_label, normalize_intent)
+from .body_map import draw_body_intent_map
 
 
 class _Capture:
@@ -287,8 +288,11 @@ class IntentCalibrationPanel:
 
     def _row_rect(self, panel, index):
         step = self._row_step(panel)
+        # For normal 1–5 action demos, reserve the right half for the body map.
+        width = (int(panel.width * .48) if len(self.targets) <= 6
+                 else panel.width - 50)
         return self.pg.Rect(panel.x + 25, panel.y + 86 + index * step,
-                            panel.width - 50, max(25, step - 6))
+                            width, max(25, step - 6))
 
     def _row_at(self, pos):
         surface = self.pg.display.get_surface()
@@ -315,6 +319,18 @@ class IntentCalibrationPanel:
                                      (244, 201, 93))
             surface.blit(action, (row.x + 12, row.y + 8))
             surface.blit(value, value.get_rect(midright=(row.right - 12, row.centery)))
+
+        if len(self.targets) <= 6:
+            selected_action = self.targets[self.selected_row].name
+            selected_intent = mapping[selected_action]
+            body_rect = self.pg.Rect(
+                panel.x + int(panel.width * .54), panel.y + 82,
+                int(panel.width * .42), min(270, int(panel.height * .56)))
+            self.pg.draw.rect(surface, (9, 20, 29), body_rect, border_radius=12)
+            self.pg.draw.rect(surface, (45, 73, 85), body_rect, 1,
+                              border_radius=12)
+            draw_body_intent_map(surface, body_rect, selected_intent,
+                                 compact=True)
 
         below = panel.y + 92 + len(self.targets) * self._row_step(panel)
         self.source_rect = self.pg.Rect(panel.x + 25, below, 160, 34)
@@ -361,18 +377,23 @@ class IntentCalibrationPanel:
             title = intent_display_name(self._intent)
             action = None if self._target is None else self._target.name
             instruction = intent_instruction(self._intent, action)
+        body_rect = self.pg.Rect(panel.x + 110, panel.y + 78,
+                                 panel.width - 220, 250)
+        draw_body_intent_map(surface, body_rect,
+                             self._intent if self.state == self.CUE else "idle",
+                             compact=True)
         t = self.big.render(title, True, (244, 201, 93))
-        surface.blit(t, t.get_rect(center=(panel.centerx, panel.y + 165)))
+        surface.blit(t, t.get_rect(center=(panel.centerx, panel.y + 342)))
         inst = self.small.render(instruction[:100], True, (207, 222, 226))
-        surface.blit(inst, inst.get_rect(center=(panel.centerx, panel.y + 205)))
+        surface.blit(inst, inst.get_rect(center=(panel.centerx, panel.y + 374)))
         counter = self.font.render(
             f"trial {self._trial}/{len(self._order)}    {left:4.1f}s",
             True, (235, 244, 246))
-        surface.blit(counter, counter.get_rect(center=(panel.centerx, panel.y + 245)))
+        surface.blit(counter, counter.get_rect(center=(panel.centerx, panel.y + 408)))
         width = panel.width - 80
         total = self.cue_ms if self.state == self.CUE else self.rest_ms
         frac = 1 - min(1, max(0, (self._phase_end - now) / max(1, total)))
-        bg = self.pg.Rect(panel.x + 40, panel.y + 280, width, 12)
+        bg = self.pg.Rect(panel.x + 40, panel.y + 438, width, 12)
         self.pg.draw.rect(surface, (38, 57, 68), bg, border_radius=6)
         self.pg.draw.rect(surface, (71, 215, 208),
                           self.pg.Rect(bg.x, bg.y, int(width * frac), 12),
