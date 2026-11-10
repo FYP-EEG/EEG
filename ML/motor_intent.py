@@ -20,6 +20,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILES = ROOT / "profiles"
+GENERAL_RECORDINGS = ROOT / "dataset" / "motor_intent"
 NO_ACTION = -1
 INTENT_LABEL_PREFIX = "intent::"
 IDLE = "idle"
@@ -162,9 +163,23 @@ def intent_profile_dir(user, intents, root=None):
 
 
 def universal_profile_dir(user, root=None):
-    """Shared labelled pool from the 13-intention body-map recorder."""
+    """Legacy per-user universal pool, retained for old recordings only."""
     base = Path(root) if root is not None else PROFILES
     return base / _slug(user) / "motor_intent" / "_universal_13"
+
+
+def general_recording_dir(root=None):
+    """General training-data pool written by ``EEG/data_record.py``.
+
+    Recordings from the standalone recorder are training data, not runtime
+    profiles. Subject/session metadata remains inside every NPZ so evaluation
+    can still group sessions and avoid leakage. Runtime models and in-app
+    personal calibration remain under ``profiles/``.
+    """
+    if root is None:
+        return GENERAL_RECORDINGS
+    base = Path(root)
+    return base if base.name == "motor_intent" else base / "motor_intent"
 
 
 def adjacent_finger_pairs(intents):

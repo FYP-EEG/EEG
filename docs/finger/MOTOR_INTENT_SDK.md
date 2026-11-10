@@ -19,23 +19,31 @@ left_index -> rock
 both_feet  -> jump
 ```
 
-Models are stored by user and unordered task set:
+Runtime models and in-app personal calibration are stored by user and unordered task set:
 
 ```text
 profiles/<user>/motor_intent/<task-set>/
-    calib_*.npz
+    calib_*.npz                 # in-app personal calibration only
     intent_model.joblib
     intent_model_info.json
 ```
+
+Standalone `EEG/data_record.py` sessions are generalized training data, not profiles:
+
+```text
+dataset/motor_intent/calib_<subject>_<timestamp>.npz
+```
+
+Each generalized NPZ still contains subject, session, montage, sampling-rate and label metadata so grouped evaluation remains possible.
 
 Changing action names without changing the motor-intent set does not require retraining. Adding/removing a motor intention creates a different task set and requires calibration.
 
 ## Universal reusable body-intent recording
 
 The recommended first recording collects a shared pool containing all ten fingers,
-left hand, right hand, both feet, and idle. It uses an asset-free pygame body map;
-the cued finger, whole hand, or both feet change colour while the real body remains
-still.
+left hand, right hand, both feet, and idle. It uses local CC0 hand/foot outline
+assets; the cued finger, whole hand, or both feet change colour while the real body
+remains still.
 
 ```bash
 python EEG/data_record.py --intent-mi --subject anson \
@@ -46,7 +54,7 @@ python EEG/data_record.py --intent-mi --subject anson \
 This records 13 active intentions x 8 trials plus 15 idle trials (119 total) into:
 
 ```text
-profiles/anson/motor_intent/_universal_13/calib_anson_*.npz
+dataset/motor_intent/calib_anson_*.npz
 ```
 
 The universal recording is a reusable labelled data pool, not one forced 14-class
@@ -73,6 +81,7 @@ The Calibration page provides the complete local flow:
 5. Follow the in-app cues; no physical movement or clicking is required.
 6. The Cyton recording is saved and training starts automatically.
 7. The result page shows pipeline, held-out accuracy, session count and reliability.
+8. The Calibration tab also shows recent `INTENDED → MODEL PREDICTION` rows. These are clearly labelled as a training-set preview; held-session accuracy remains the generalisation metric.
 
 Launch a real calibration directly inside RPS:
 
@@ -81,7 +90,7 @@ python example/rockpaperscissors.py --user anson --port COM4 \
   --calibration-source cyton
 ```
 
-Use F2, then Enter. The tab stops a running BCI before opening the board and, after successful real training, can restart `intent-mi`. A dry run checks only timing/UI and deliberately saves no EEG model. One block trains a usable experimental model but cannot produce a trustworthy session-held-out score; record at least three separate blocks. During training, the loader combines the selected app-specific labels with matching trials from the reusable `_universal_13` pool.
+Use F2, then Enter. The tab stops a running BCI before opening the board and, after successful real training, can restart `intent-mi`. A dry run checks only timing/UI and deliberately saves no EEG model. One block trains a usable experimental model but cannot produce a trustworthy session-held-out score; record at least three separate blocks. During training, the loader combines the selected app-specific profile calibration with matching labels from the generalized `dataset/motor_intent/` pool. Legacy `_universal_13` profile recordings remain readable.
 
 Default in-app block sizes provide screening headroom:
 
@@ -178,7 +187,7 @@ Play:
 python example/subway_run.py --bci intent-mi --user anson --port COM4
 ```
 
-Keyboard fallback: LEFT/A, RIGHT/D, UP/W/SPACE.
+Keyboard fallback: LEFT/A, RIGHT/D, UP/W. Space is reserved for pause/resume.
 
 ## Realistic UI
 
@@ -204,6 +213,35 @@ python ML/train_intent_mi.py anson \
 
 python example/realistic_ui.py --bci intent-mi --user anson --port COM4
 ```
+
+## Gameplay feedback and separate performance monitor
+
+On the GAME page of all three demos:
+
+```text
+Space        pause/resume the game and BCI dispatch
+Left click   mark the latest classified output correct
+Right click  mark the latest classified output incorrect
+```
+
+When BCI is active, mouse clicks are feedback controls rather than game-button clicks. Feedback is explicit human annotation only; it is logged but never used for automatic retraining. Because a physical click can add EMG/movement contamination, classification is suppressed and queued windows are discarded for 3.2 seconds after feedback or resume.
+
+Gameplay sessions write:
+
+```text
+runtime_logs/<app>/<timestamp>/
+    events.jsonl      # predictions, state changes and manual feedback
+    status.json       # live summary and manual correctness metrics
+    latest_eeg.npy    # latest raw 8-channel window
+```
+
+Open the separate dashboard in another terminal:
+
+```bash
+python example/performance_monitor.py
+```
+
+It visualizes the latest eight-channel EEG window, prediction state, confidence, dispatch/rejection counts and manually marked accuracy. Use `--app rockpaperscissors` or `--session <directory>` to select a specific stream.
 
 ## Public Python API
 

@@ -140,9 +140,10 @@ def _load_bci():
 #
 # --intent-mi is the recommended scalable contract. It stores physical labels
 # such as intent::left_index or intent::both_feet independently of Rock, jump,
-# inventory, or any other app action. Recordings/models are keyed by user and
-# task set under profiles/<user>/motor_intent/, so developers can remap a
-# trained task set to new callbacks without retraining.
+# inventory, or any other app action. Standalone recorder output is generalized
+# training data under dataset/motor_intent/; it is not a runtime profile.
+# Trained models and in-app personal calibration remain under profiles/<user>/
+# for actual SDK/gameplay use.
 #
 # ML/train_local.py never sees either experimental data directory.
 
@@ -1218,11 +1219,12 @@ def run_example(args):
                     from ML.button_mi import button_profile_dir
                     out = button_profile_dir(args.subject, script.stem)
                 elif args.intent_mi:
+                    # EEG/data_record.py produces generalized training data,
+                    # never a runtime profile. Subject/session metadata remains
+                    # inside the NPZ for grouped evaluation. Personal in-app
+                    # calibration and trained models still use profiles/.
                     api = _load_motor_intent_api()
-                    if args.universal_pool:
-                        out = api.universal_profile_dir(args.subject)
-                    else:
-                        out = api.intent_profile_dir(args.subject, rec.intent_values)
+                    out = api.general_recording_dir()
                 else:
                     out = ROOT / "profiles" / args.subject.lower()
                 npz = save_session(X, y, labels, args.subject, capture.fs,
@@ -1244,11 +1246,11 @@ def run_example(args):
                         print(f"  synthetic rehearsal -> {npz}")
                         print("  WARNING: do not train a real model from dry-run data")
                     elif args.universal_pool:
-                        print(f"  universal reusable pool -> {npz}")
-                        print("  examples can now record extra app-specific "
-                              "calibration and train subsets from this pool")
+                        print(f"  generalized reusable training pool -> {npz}")
+                        print("  this recording is training data, not a runtime "
+                              "profile; task models filter their labels from it")
                     else:
-                        print(f"  intent calibration -> {npz}")
+                        print(f"  generalized intent training data -> {npz}")
                         joined = ",".join(rec.intent_values)
                         print(f"  next:  python ML/train_intent_mi.py "
                               f"{args.subject} --intents {joined}")

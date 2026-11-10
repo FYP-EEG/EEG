@@ -50,6 +50,7 @@ _CORE_EXPORTS = [
     "ArtifactDetector", "build_runtime", "LEFT", "RIGHT",
     "LiveBCI", "ScanSelector", "SineProbe", "SineProbeModel",
     "IntentCalibrationPanel", "draw_body_intent_map", "GameCalibrationMenu",
+    "GameplayMonitor", "PredictionPerformanceLogger",
     "BCIError", "HardwareError", "CalibrationError", "NotCalibratedError",
 ]
 _UI_EXPORTS = [
@@ -112,6 +113,8 @@ _LAZY_EXPORTS = {
     "IntentCalibrationPanel": ("bci_sdk.intent_calibration", "IntentCalibrationPanel"),
     "draw_body_intent_map": ("bci_sdk.body_map", "draw_body_intent_map"),
     "GameCalibrationMenu": ("bci_sdk.start_menu", "GameCalibrationMenu"),
+    "GameplayMonitor": ("bci_sdk.performance", "GameplayMonitor"),
+    "PredictionPerformanceLogger": ("bci_sdk.performance", "PredictionPerformanceLogger"),
     "BCIError": ("bci_sdk.errors", "BCIError"),
     "HardwareError": ("bci_sdk.errors", "HardwareError"),
     "CalibrationError": ("bci_sdk.errors", "CalibrationError"),
