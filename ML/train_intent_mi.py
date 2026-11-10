@@ -29,8 +29,9 @@ from sklearn.model_selection import GroupKFold
 from ML.mi_advanced import make_riemannian, make_riemannian_lr
 from ML.motor_intent import (IDLE, INTENT_LABEL_PREFIX, MotorIntentMap,
                              assess_intent_set, canonical_intents,
-                             intent_profile_dir, make_intent_label,
-                             parse_intent_label, universal_profile_dir)
+                             general_recording_dir, intent_profile_dir,
+                             make_intent_label, parse_intent_label,
+                             universal_profile_dir)
 
 INTENT_PIPELINES = {
     "riemann_svm": make_riemannian,
@@ -41,18 +42,39 @@ MIN_SESSIONS = 3
 DEFAULT_CONFIDENCE_THRESHOLD = 0.55
 
 
-def load_intent_data(user, intents, root=None):
+def load_intent_data(user, intents, root=None, data_root=None):
     wanted = canonical_intents(intents)
     directory = intent_profile_dir(user, wanted, root=root)
     exact_files = sorted(glob.glob(str(directory / "calib_*.npz")))
+
+    # Standalone EEG/data_record.py sessions are generalized training data and
+    # never belong to a runtime profile. All physical labels are filtered to
+    # this task set here. Personal in-app calibration can still contribute
+    # task-specific sessions from the runtime profile directory above.
+    general_dir = general_recording_dir(data_root)
+    general_files = sorted(glob.glob(str(general_dir / "calib_*.npz")))
+
+    # Backward compatibility for recordings made before the generalized pool.
     universal_dir = universal_profile_dir(user, root=root)
     universal_files = sorted(glob.glob(str(universal_dir / "calib_*.npz")))
-    files = [(path, "task") for path in exact_files]
-    files += [(path, "universal") for path in universal_files]
+
+    files = [(path, "profile") for path in exact_files]
+    files += [(path, "general") for path in general_files]
+    files += [(path, "legacy-universal") for path in universal_files]
+    # Avoid double-reading if a caller deliberately points roots together.
+    deduplicated = []
+    seen_paths = set()
+    for path, source in files:
+        resolved = str(Path(path).resolve())
+        if resolved not in seen_paths:
+            deduplicated.append((path, source))
+            seen_paths.add(resolved)
+    files = deduplicated
     if not files:
         raise FileNotFoundError(
-            f"No task-specific recordings in {directory} and no reusable "
-            f"universal recordings in {universal_dir}.")
+            f"No personal calibration recordings in {directory}, no generalized "
+            f"training recordings in {general_dir}, and no legacy recordings "
+            f"in {universal_dir}.")
 
     wanted_labels = {make_intent_label(v) for v in wanted}
     sessions, all_labels = [], set()
@@ -66,11 +88,17 @@ def load_intent_data(user, intents, root=None):
                 continue
             X, labels = X[mask], labels[mask]
             decoded = [parse_intent_label(v) for v in labels]
-            if source == "universal":
+            if source in ("general", "legacy-universal"):
                 keep = np.array([v in set(wanted) or v == IDLE for v in decoded])
                 X, labels = X[keep], labels[keep]
                 decoded = [v for v, use in zip(decoded, keep) if use]
                 if not len(X):
+                    continue
+                # General data may come from another application's smaller task
+                # set. Only complete sessions are useful for session-held-out
+                # evaluation of this requested model; incomplete ones are
+                # ignored rather than treated as corrupt.
+                if not wanted_labels.issubset(set(labels.tolist())):
                     continue
             else:
                 unexpected = set(decoded) - set(wanted) - {IDLE}
@@ -85,7 +113,9 @@ def load_intent_data(user, intents, root=None):
             montages.add(str(data["montage"]))
 
     if not sessions:
-        raise ValueError(f"recordings in {directory} contain no motor-intent labels")
+        raise ValueError(
+            "available recordings contain no complete session for requested "
+            f"intentions {wanted!r}; checked {directory} and {general_dir}")
     if len(fs_values) != 1:
         raise ValueError(f"sessions use different sample rates: {sorted(fs_values)}")
     if len(montages) != 1:
@@ -150,12 +180,13 @@ def session_folds(groups, y, n_splits=3):
             yield train, test
 
 
-def train_intent_user(user, intents, root=None, sample_freq=None, n_splits=3,
+def train_intent_user(user, intents, root=None, data_root=None,
+                      sample_freq=None, n_splits=3,
                       confidence_threshold=DEFAULT_CONFIDENCE_THRESHOLD,
                       screen=True, verbose=True):
     wanted = canonical_intents(intents)
     assessment = assess_intent_set(wanted)
-    data = load_intent_data(user, wanted, root=root)
+    data = load_intent_data(user, wanted, root=root, data_root=data_root)
 
     if screen:
         from ML.quality import screen_trials
@@ -289,7 +320,10 @@ def main():
     ap.add_argument("--intents", required=True,
                     help="comma-separated task set, e.g. "
                          "left_index,right_index,right_pinky")
-    ap.add_argument("--root", default=None)
+    ap.add_argument("--root", default=None,
+                    help="runtime profile/model root (default: profiles/)")
+    ap.add_argument("--data-root", default=None,
+                    help="generalized recording root (default: dataset/motor_intent)")
     ap.add_argument("--splits", type=int, default=3)
     ap.add_argument("--threshold", type=float,
                     default=DEFAULT_CONFIDENCE_THRESHOLD)
@@ -297,8 +331,9 @@ def main():
     args = ap.parse_args()
     intents = [part.strip() for part in args.intents.split(",") if part.strip()]
     result = train_intent_user(
-        args.user, intents, root=args.root, n_splits=args.splits,
-        confidence_threshold=args.threshold, screen=not args.no_screen)
+        args.user, intents, root=args.root, data_root=args.data_root,
+        n_splits=args.splits, confidence_threshold=args.threshold,
+        screen=not args.no_screen)
     return 0 if result else 1
 
 

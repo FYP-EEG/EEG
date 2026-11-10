@@ -9,7 +9,11 @@ Default reusable intent mapping:
     both_feet  -> jump
 
 Keyboard fallback:
-    LEFT / A, RIGHT / D, UP / SPACE
+    LEFT / A, RIGHT / D, UP / W
+
+Gameplay feedback:
+    SPACE pauses/resumes; left click marks the latest prediction correct;
+    right click marks it incorrect.
 
 Run without BCI:
     python example/subway_run.py
@@ -35,6 +39,7 @@ if str(ROOT) not in sys.path:
 from bci_sdk.live import LiveBCI
 from bci_sdk.intent_calibration import IntentCalibrationPanel
 from bci_sdk.start_menu import GameCalibrationMenu
+from bci_sdk.performance import GameplayMonitor
 from ML.motor_intent import BODY_INTENTS, parse_intent_map
 
 pygame.init()
@@ -88,7 +93,7 @@ class ActionTarget:
 
 move_left_target = ActionTarget(0, "move_left", "MOVE LEFT", "LEFT HAND · ← / A")
 move_right_target = ActionTarget(1, "move_right", "MOVE RIGHT", "RIGHT HAND · → / D")
-jump_target = ActionTarget(2, "jump", "JUMP", "BOTH FEET · ↑ / SPACE")
+jump_target = ActionTarget(2, "jump", "JUMP", "BOTH FEET · ↑ / W")
 BCI_RECORD_TARGETS = [move_left_target, move_right_target, jump_target]
 targets = BCI_RECORD_TARGETS
 
@@ -107,6 +112,9 @@ _ap.add_argument("--calibration-idle", type=int, default=12)
 _ap.add_argument("--calibration-cue", type=float, default=4.0)
 _ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _unknown = _ap.parse_known_args()
+performance = GameplayMonitor(
+    "subway_run", user=_args.user,
+    enabled="__bci_recorder_frame__" not in globals())
 if _args.intent_map:
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
 
@@ -236,6 +244,10 @@ try:
                 continue
             if calibration.handle_event(event):
                 continue
+            if performance.handle_event(event, bci):
+                continue
+            if performance.paused:
+                continue
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
                     running = False
@@ -243,21 +255,21 @@ try:
                     move_left()
                 elif event.key in (pygame.K_RIGHT, pygame.K_d):
                     move_right()
-                elif event.key in (pygame.K_UP, pygame.K_SPACE, pygame.K_w):
+                elif event.key in (pygame.K_UP, pygame.K_w):
                     jump()
             elif event.type == pygame.VIDEORESIZE:
                 win = pygame.display.set_mode(event.size, pygame.RESIZABLE)
                 layout(*event.size)
 
         calibration.update()
-        if calibration.visible or start_menu.visible:
+        if calibration.visible or start_menu.visible or performance.paused:
             dt = 0.0
         if bci is not None and not calibration.visible:
-            bci.poll()
+            performance.poll(bci)
 
         width, height = win.get_size()
         centres, road_left, road_w = lane_centres(width)
-        if now >= spawn_at:
+        if not performance.paused and now >= spawn_at:
             blocked = random.randrange(3)
             obstacles.append([blocked, -40.0])
             spawn_at = now + random.randint(1200, 2100)
@@ -307,6 +319,7 @@ try:
             "MI profile: LEFT HAND = left · RIGHT HAND = right · BOTH FEET = jump",
             True, (150, 172, 180))
         win.blit(caption, caption.get_rect(center=(width // 2, height - 22)))
+        performance.draw(win)
         calibration.draw(win)
         start_menu.draw(win)
 
@@ -317,4 +330,5 @@ try:
 finally:
     if bci is not None:
         bci.stop()
+    performance.close()
     pygame.quit()

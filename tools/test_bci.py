@@ -803,8 +803,8 @@ def layer3():
     print("\n== Reusable scalable motor-intent profiles ==")
     from ML.motor_intent import (MotorIntentMap, MotorIntentModel,
         FINGER_INTENTS, UNIVERSAL_INTENTS, assess_intent_set,
-        intent_profile_dir, universal_profile_dir, make_intent_label,
-        parse_intent_map, task_set_key)
+        general_recording_dir, intent_profile_dir, universal_profile_dir,
+        make_intent_label, parse_intent_map, task_set_key)
     from ML.train_intent_mi import train_intent_user, load_intent_data
 
     default_map = MotorIntentMap({
@@ -848,12 +848,27 @@ def layer3():
                             fs=250, montage="cyton8_motor")
         pooled = load_intent_data(
             "demo", ["left_index", "right_index", "right_pinky"],
-            root=pool_root)
+            root=pool_root, data_root=pool_root / "empty-general")
         check("task model filters its subset from the reusable universal pool",
               set(pooled["class_map"].values()) ==
               {"left_index", "right_index", "right_pinky", "idle"} and
               pooled["X"].shape[0] == 32 and
-              pooled["files"] == ["universal/calib_universal_0.npz"])
+              pooled["files"] == ["legacy-universal/calib_universal_0.npz"])
+
+        general_root = pool_root / "training-dataset"
+        general_dir = general_recording_dir(general_root)
+        general_dir.mkdir(parents=True)
+        np.savez_compressed(
+            general_dir / "calib_subject_session0.npz",
+            X=pX, y=np.arange(len(pX)), labels=pL,
+            fs=250, montage="cyton8_motor", subject="subject")
+        generalized = load_intent_data(
+            "runtime_user", ["left_index", "right_index", "right_pinky"],
+            root=pool_root / "empty-profiles", data_root=general_root)
+        check("standalone recordings load from generalized dataset, not profiles",
+              generalized["X"].shape[0] == 32 and
+              generalized["files"] ==
+              ["general/calib_subject_session0.npz"])
 
     with tempfile.TemporaryDirectory() as intent_tmp_text:
         intent_root = Path(intent_tmp_text)
@@ -876,7 +891,8 @@ def layer3():
                 labels=np.asarray(il)[order], fs=250,
                 montage="cyton8_motor")
         intent_result = train_intent_user(
-            "demo", intentions, root=intent_root, n_splits=3,
+            "demo", intentions, root=intent_root,
+            data_root=intent_root / "empty-general", n_splits=3,
             screen=False, verbose=False)
         check("task-set trainer writes reusable intent_model.joblib",
               intent_result is not None and
@@ -1583,6 +1599,74 @@ def layer5():
           panel.result.get("n_trials") == 4 and not panel.error)
     panel.draw(pygame.display.get_surface())
     check("calibration setup/result renders without error", True)
+    panel.result = {
+        "pipeline": "riemann_lr", "accuracy": .5, "n_sessions": 1,
+        "reliable": False, "comparison_kind": "training-set preview",
+        "comparison_correct": 1,
+        "prediction_comparison": [
+            {"intended": "left_index", "predicted": "left_index",
+             "correct": True},
+            {"intended": "right_index", "predicted": "idle",
+             "correct": False},
+        ],
+    }
+    panel.state = panel.RESULT
+    panel.draw(pygame.display.get_surface())
+    check("calibration result renders intended versus model prediction", True)
+
+    print("\n== Gameplay prediction feedback + monitor export ==")
+    import json
+    import tempfile
+    from bci_sdk.performance import GameplayMonitor
+
+    class MonitorBridge:
+        def __init__(self): self.drained = 0
+        def poll_all(self): self.drained += 1; return []
+
+    class MonitorBCI:
+        def __init__(self):
+            self.bridge = MonitorBridge()
+            self.last_window = None
+            self.count = 0
+        def poll(self):
+            self.count += 1
+            self.last_window = np.full((8, 750), self.count, dtype=float)
+            return {"state": "DISPATCHED", "command": "left_index",
+                    "selected": "rock", "confidence": .82,
+                    "candidates": ["rock"]}
+
+    with tempfile.TemporaryDirectory() as monitor_tmp_text:
+        gameplay = GameplayMonitor("test_game", user="anson",
+                                   root=Path(monitor_tmp_text),
+                                   feedback_lockout_s=0)
+        monitor_bci = MonitorBCI()
+        gameplay.poll(monitor_bci)
+        left_feedback = gameplay.handle_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(1, 1)),
+            monitor_bci)
+        gameplay.poll(monitor_bci)
+        right_feedback = gameplay.handle_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=(1, 1)),
+            monitor_bci)
+        pause_used = gameplay.handle_event(
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE), monitor_bci)
+        resume_used = gameplay.handle_event(
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE), monitor_bci)
+        status_path = gameplay.logger.status_path
+        eeg_path = gameplay.logger.eeg_path
+        gameplay.close()
+        monitor_status = json.loads(status_path.read_text())
+        check("left/right clicks mark latest prediction correct/incorrect",
+              left_feedback and right_feedback and
+              monitor_status["stats"]["feedback_correct"] == 1 and
+              monitor_status["stats"]["feedback_incorrect"] == 1)
+        check("Space pauses/resumes and drains stale queued EEG on resume",
+              pause_used and resume_used and not gameplay.paused and
+              monitor_bci.bridge.drained == 1)
+        check("separate dashboard receives status, events and 8-channel EEG",
+              status_path.exists() and eeg_path.exists() and
+              np.load(eeg_path).shape == (8, 750) and
+              (status_path.parent / "events.jsonl").exists())
 
     print("\n== Typed errors ==")
     check("error hierarchy", issubclass(bci_sdk.HardwareError, bci_sdk.BCIError)

@@ -46,6 +46,7 @@ from Button import Button
 from bci_sdk.live import LiveBCI
 from bci_sdk.intent_calibration import IntentCalibrationPanel
 from bci_sdk.start_menu import GameCalibrationMenu
+from bci_sdk.performance import GameplayMonitor
 from ML.motor_intent import FINGER_INTENTS, parse_intent_map
 
 """
@@ -240,6 +241,9 @@ _ap.add_argument("--calibration-idle", type=int, default=12)
 _ap.add_argument("--calibration-cue", type=float, default=4.0)
 _ap.add_argument("--calibration-rest", type=float, default=2.0)
 _args, _ = _ap.parse_known_args()
+performance = GameplayMonitor(
+    "realistic_ui", user=_args.user,
+    enabled="__bci_recorder_frame__" not in globals())
 
 if _args.intent_map:
     BCI_INTENT_MAP = parse_intent_map(_args.intent_map)
@@ -398,6 +402,10 @@ while run:
             continue
         if calibration.handle_event(e):
             continue
+        if performance.handle_event(e, bci):
+            continue
+        if performance.paused:
+            continue
         if e.type == KEYDOWN and e.key == K_LEFT:
             #stand-in for "imagine LEFT hand"
             move_highlight()
@@ -483,10 +491,11 @@ while run:
 
     calibration.update()
     if bci is not None and not calibration.visible:
-        bci.poll()                                  # non-blocking
+        performance.poll(bci)                       # non-blocking + logged
 
     for button in buttons:
         button.draw(win)
+    performance.draw(win)
     calibration.draw(win)
     start_menu.draw(win)
 
@@ -510,4 +519,5 @@ while run:
 
 if bci is not None:
     bci.stop()
+performance.close()
 pygame.quit()

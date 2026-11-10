@@ -417,7 +417,7 @@ class IntentCalibrationPanel:
         accuracy = result.get("accuracy")
         acc = "unavailable" if accuracy is None else f"{accuracy:.1%}"
         title = self.big.render("MODEL TRAINED", True, (125, 219, 155))
-        surface.blit(title, title.get_rect(center=(panel.centerx, panel.y + 145)))
+        surface.blit(title, title.get_rect(center=(panel.centerx, panel.y + 105)))
         lines = [
             f"pipeline: {result.get('pipeline', '?')}",
             f"session-held-out balanced accuracy: {acc}",
@@ -425,15 +425,45 @@ class IntentCalibrationPanel:
             f"reliable score: {'YES' if result.get('reliable') else 'NO'}",
         ]
         for i, line in enumerate(lines):
-            text = self.font.render(line, True, (214, 228, 231))
+            text = self.small.render(line, True, (214, 228, 231))
             surface.blit(text, text.get_rect(center=(panel.centerx,
-                                                     panel.y + 195 + i * 34)))
+                                                     panel.y + 140 + i * 23)))
         if not result.get("reliable"):
             warning = self.small.render(
-                "Record more separate blocks. The model runs, but its score is not trustworthy.",
+                "Record more separate blocks; the held-session score is not reliable yet.",
                 True, (239, 165, 139))
             surface.blit(warning, warning.get_rect(center=(panel.centerx,
-                                                           panel.y + 345)))
+                                                           panel.y + 238)))
+
+        comparison = result.get("prediction_comparison") or []
+        if comparison:
+            correct = int(result.get("comparison_correct", 0))
+            heading = self.font.render(
+                "INTENDED  →  MODEL PREDICTION", True, (244, 201, 93))
+            surface.blit(heading, heading.get_rect(center=(panel.centerx,
+                                                           panel.y + 275)))
+            summary = self.small.render(
+                f"{correct}/{len(comparison)} matched · "
+                f"{result.get('comparison_kind', 'preview')}",
+                True, (193, 211, 216))
+            surface.blit(summary, summary.get_rect(center=(panel.centerx,
+                                                           panel.y + 300)))
+            # Recent rows keep the result readable on a 600 px window. The
+            # complete comparison remains in result['prediction_comparison'].
+            for index, row in enumerate(comparison[-4:]):
+                intended = str(row["intended"]).replace("_", " ").upper()
+                predicted = str(row["predicted"]).replace("_", " ").upper()
+                mark = "OK" if row["correct"] else "WRONG"
+                color = (125, 219, 155) if row["correct"] else (255, 128, 111)
+                text = self.small.render(
+                    f"{intended}  →  {predicted}   {mark}", True, color)
+                surface.blit(text, text.get_rect(center=(panel.centerx,
+                                                         panel.y + 326 + index * 19)))
+            caution = self.small.render(
+                "Preview uses the fitted block; use held-session accuracy for generalisation.",
+                True, (239, 165, 139))
+            surface.blit(caution, caution.get_rect(center=(panel.centerx,
+                                                           panel.y + 410)))
         done = self.small.render("Enter: return to setup · F2/Esc: return to game",
                                  True, (143, 165, 173))
         surface.blit(done, done.get_rect(center=(panel.centerx, panel.bottom - 28)))
@@ -574,5 +604,31 @@ class IntentCalibrationPanel:
                 self.user, values, root=self.root, verbose=False)
             if self.result is None:
                 raise RuntimeError("recording saved, but too few trials remained to train")
+
+            # Calibration-tab-only intended-versus-predicted output. These are
+            # actual outputs from the newly saved model on the just-recorded
+            # epochs. Because the same block contributed to fitting, label this
+            # honestly as a training preview rather than validation accuracy;
+            # session-held-out accuracy above remains the generalisation metric.
+            import joblib
+            bundle = joblib.load(self.result["path"])
+            predictions = np.asarray(bundle["model"].predict(np.asarray(X)),
+                                     dtype=int)
+            class_map = {int(k): str(v)
+                         for k, v in dict(bundle["class_map"]).items()}
+            intended = [label.split("::", 1)[1] for label in labels]
+            comparison = []
+            for intended_name, predicted_index in zip(intended, predictions):
+                predicted_name = class_map.get(int(predicted_index),
+                                               f"class_{predicted_index}")
+                comparison.append({
+                    "intended": intended_name,
+                    "predicted": predicted_name,
+                    "correct": predicted_name == intended_name,
+                })
+            self.result["prediction_comparison"] = comparison
+            self.result["comparison_kind"] = "training-set preview"
+            self.result["comparison_correct"] = sum(
+                int(row["correct"]) for row in comparison)
         except Exception as exc:
             self.error = str(exc)

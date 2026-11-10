@@ -259,6 +259,8 @@ class LiveBCI:
         self.verbose = verbose
         self.source = source
         self.sample_freq = sample_freq
+        self.last_window = None
+        self.last_result = None
 
         # ---- classifier
         if source in ("sine", "synthetic"):
@@ -366,7 +368,9 @@ class LiveBCI:
         win = self.bridge.poll()
         if win is None:
             return None
+        self.last_window = win
         r = self.decider.step(win)
+        self.last_result = r
         if self.verbose and r["state"] in ("DISPATCHED", "BLINK"):
             d = getattr(self.model, "last", None) or {}
             extra = f" {d['freq']:.2f} Hz" if d.get("freq") else ""
