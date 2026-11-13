@@ -108,9 +108,42 @@ def layer1():
     import numpy as np
 
     from stream_bridge import (RingBuffer, StreamBridge, SyntheticBackend,
-                               ReplayBackend)          # noqa
+                               ReplayBackend, BrainFlowBackend)  # noqa
     from ML.bci_engine import BCIEngine                # noqa
     from ML.hybrid_classifier import HybridSSVEPClassifier  # noqa
+    import inspect
+    brainflow_start_source = inspect.getsource(BrainFlowBackend.start)
+    check("direct Cyton acquisition resets persistent test inputs to defaults",
+          'config_board("d")' in brainflow_start_source and
+          "self.reset_channels" in brainflow_start_source)
+
+    print("\n== Pre-recording connection/signal preflight ==")
+    from EEG.signal_preflight import analyse_preflight, save_preflight_report
+    preflight_rng = np.random.default_rng(77)
+    clean_preflight = preflight_rng.normal(0, 5, (8, 1500))
+    clean_result = analyse_preflight(
+        clean_preflight, fs=250, elapsed=6.0,
+        channel_labels=["FC3", "FC4", "C3", "Cz", "C4", "CP3", "CP4", "Pz"])
+    check("clean 8-channel/250-Hz baseline passes preflight",
+          clean_result["connection_ok"] and clean_result["signal_ok"])
+    square = np.tile(np.where(np.arange(1500) % 2, 2000.0, -2000.0), (8, 1))
+    square_result = analyse_preflight(square, fs=250, elapsed=6.0)
+    check("board-wide square/test signal is blocked with debug diagnosis",
+          not square_result["signal_ok"] and
+          square_result["possible_test_signal"] and
+          all(not row["ok"] for row in square_result["channels"]))
+    flat = clean_preflight.copy(); flat[3] = 0
+    flat_result = analyse_preflight(flat, fs=250, elapsed=6.0)
+    check("one flat electrode blocks recording and identifies its channel",
+          not flat_result["signal_ok"] and
+          flat_result["channels"][3]["reasons"] == ["flat"])
+    import tempfile
+    with tempfile.TemporaryDirectory() as preflight_tmp_text:
+        preflight_html, preflight_json = save_preflight_report(
+            flat_result, flat, Path(preflight_tmp_text) / "preflight")
+        check("failed preflight writes HTML and JSON debugging reports",
+              preflight_html.exists() and preflight_json.exists() and
+              preflight_html.stat().st_size > 1000)
 
     print("\n== RingBuffer ==")
     rb = RingBuffer(3, 100)
@@ -1617,7 +1650,7 @@ def layer5():
     print("\n== Gameplay prediction feedback + monitor export ==")
     import json
     import tempfile
-    from bci_sdk.performance import GameplayMonitor
+    from bci_sdk.performance import GameplayMonitor, TrainingDataPerformance
 
     class MonitorBridge:
         def __init__(self): self.drained = 0
@@ -1667,6 +1700,65 @@ def layer5():
               status_path.exists() and eeg_path.exists() and
               np.load(eeg_path).shape == (8, 750) and
               (status_path.parent / "events.jsonl").exists())
+
+    print("\n== Saved training-data performance monitor ==")
+    with tempfile.TemporaryDirectory() as training_tmp_text:
+        training_root = Path(training_tmp_text)
+        rng = np.random.default_rng(2026)
+        training_X = rng.normal(0, 5, (16, 8, 750))
+        training_labels = np.array(
+            ["intent::left_hand"] * 8 + ["intent::right_hand"] * 8)
+        training_file = training_root / "calib_brian_session0.npz"
+        np.savez_compressed(
+            training_file, X=training_X, labels=training_labels,
+            y=np.array([0] * 8 + [1] * 8), fs=250,
+            montage="cyton8_motor", subject="brian")
+        training_monitor = TrainingDataPerformance([training_file])
+        training_report = training_monitor.report()
+        first_trial = training_monitor.trial(0)
+        check("training monitor loads labels, sessions and 8-channel epochs",
+              training_report["trials"] == 16 and
+              training_report["sessions"] == 1 and
+              training_report["shape"] == [16, 8, 750] and
+              training_report["class_counts"]["intent::left_hand"] == 8 and
+              training_report["channel_labels"] ==
+              ["FC3", "FC4", "C3", "CZ", "C4", "CP3", "CP4", "PZ"])
+        check("training monitor exposes screening verdict and selected EEG trial",
+              isinstance(first_trial["keep"], bool) and
+              first_trial["window"].shape == (8, 750) and
+              first_trial["intended"] == "left_hand")
+        check("training monitor labels model metrics as training-only preview",
+              "not held-session" in training_report["warning"])
+        check("training monitor reports aggregate rejection reasons",
+              set(training_report["drop_reason_counts"]) ==
+              {"amplitude", "flat", "jump", "outlier", "noncompliant"})
+        check("training monitor attributes amplitude/flat/jump failures per channel",
+              len(training_report["channel_diagnostics"]) == 8 and
+              all({"peak_p95_uv", "amplitude_fail_trials", "std_min_uv",
+                   "flat_fail_trials", "jump_p95_uv", "jump_fail_trials"}
+                  <= set(row) for row in training_report["channel_diagnostics"]))
+
+        from EEG.relabel_recording_montage import relabel
+        corrected = relabel(training_file, "cyton8_fp_occipital")
+        with np.load(corrected, allow_pickle=True) as corrected_data:
+            check("montage relabeller changes metadata but not EEG samples",
+                  str(corrected_data["montage"]) == "cyton8_fp_occipital" and
+                  corrected_data["channel_labels"].astype(str).tolist() ==
+                  ["Fp1", "Fp2", "O1", "Oz", "O2", "PO3", "PO4", "Pz"] and
+                  np.array_equal(corrected_data["X"], training_X))
+
+        from tools.inspect_training_recordings import inspect_file, build_html
+        inspected = inspect_file(
+            corrected,
+            {"amp_uv": 400, "jump_uv": 75, "flat_uv": .05, "z_max": 4})
+        report_html, report_json = build_html(
+            [(corrected, *inspected)], training_root / "inspection.html")
+        inspection_payload = json.loads(report_json.read_text())
+        check("tools training inspector reports partial/mixed-montage usefulness",
+              report_html.exists() and report_html.stat().st_size > 1000 and
+              inspection_payload[0]["partial_universal"] and
+              not inspection_payload[0]["has_motor_core"] and
+              "LIMITED" in inspection_payload[0]["verdict"])
 
     print("\n== Typed errors ==")
     check("error hierarchy", issubclass(bci_sdk.HardwareError, bci_sdk.BCIError)
