@@ -301,8 +301,9 @@ class SessionCapture:
         """
         return self._n
 
-    def start(self):
-        self.backend.start()
+    def start(self, backend_already_started=False):
+        if not backend_already_started:
+            self.backend.start()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name="SessionCapture")
@@ -830,6 +831,75 @@ class CuedRecorder:
         return path
 
 
+def _recording_report_root(args):
+    base = (Path(args.report_dir) if getattr(args, "report_dir", None)
+            else ROOT / "reports" / "recording_quality")
+    return base / str(args.subject or "unknown").lower()
+
+
+def _start_real_capture_with_preflight(backend, args):
+    """Open hardware, verify live raw EEG, report, then start capture thread."""
+    from EEG.signal_preflight import (analyse_preflight, collect_preflight,
+                                      print_preflight, save_preflight_report)
+    try:
+        print("\nHardware connection check: opening board and waiting for samples...",
+              flush=True)
+        backend.start()
+        try:
+            from ML.montage import get
+            channel_labels = list(get(args.montage).get("labels", []))
+        except Exception:
+            channel_labels = []
+        print(f"Connection PASS. Remain still for the "
+              f"{args.preflight_seconds:g}s signal-quality baseline...",
+              flush=True)
+        data, fs, elapsed = collect_preflight(
+            backend, seconds=args.preflight_seconds)
+        result = analyse_preflight(
+            data, fs=fs, elapsed=elapsed, channel_labels=channel_labels)
+        print_preflight(result)
+        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_base = _recording_report_root(args) / f"preflight_{stamp}"
+        html_path, json_path = save_preflight_report(
+            result, data, report_base)
+        print(f"  preflight HTML -> {html_path}")
+        print(f"  preflight JSON -> {json_path}")
+        if not result["acceptable"] and not args.force_record:
+            print("\nRECORDING BLOCKED: fix the reported signal problem, then "
+                  "run again. Use --force-record only for deliberate debugging; "
+                  "forced data may be unusable for training.")
+            backend.stop()
+            return None
+        if not result["acceptable"]:
+            print("\nWARNING: --force-record accepted a failed preflight.")
+        return SessionCapture(backend).start(backend_already_started=True)
+    except Exception:
+        try:
+            backend.stop()
+        except Exception:
+            pass
+        raise
+
+
+def _generate_saved_recording_report(npz_path, args):
+    """Generate HTML/JSON quality report immediately after saving an NPZ."""
+    try:
+        from tools.inspect_training_recordings import inspect_file, build_html
+        screening_kw = {"amp_uv": 400.0, "jump_uv": 75.0,
+                        "flat_uv": .05, "z_max": 4.0}
+        inspected = inspect_file(Path(npz_path), screening_kw)
+        output = _recording_report_root(args) / (Path(npz_path).stem + ".html")
+        html_path, json_path = build_html(
+            [(Path(npz_path), *inspected)], output)
+        print(f"  recording quality HTML -> {html_path}")
+        print(f"  recording quality JSON -> {json_path}")
+        return html_path, json_path
+    except Exception as exc:
+        print(f"  WARNING: recording saved but report generation failed: "
+              f"{type(exc).__name__}: {exc}")
+        return None
+
+
 def run_example(args):
     """Execute example/<name>.py with the cue recorder attached."""
     name = args.file
@@ -870,14 +940,32 @@ def run_example(args):
             print("DRY-RUN: synthetic backend, no hardware touched")
         else:
             from stream_bridge import BrainFlowBackend
+            if args.board_id == 0 and not args.serial_port:
+                print("Direct Cyton mode needs --serial-port COM4 (replace "
+                      "COM4 with the dongle port that appears in Windows).")
+                return 1
             # serial_port must be a string: BrainFlow rejects None with a
             # bare GENERAL_ERROR:17 that says nothing about the cause. The
-            # synthetic board (-1) needs no port at all.
+            # streaming board (-2) receives UDP and needs no serial port.
             backend = BrainFlowBackend(board_id=args.board_id,
                                        serial_port=args.serial_port or "",
                                        n_channels=8)
-            print(f"Recording started (board_id={args.board_id})")
-        capture = SessionCapture(backend).start()
+        if args.dry_run:
+            capture = SessionCapture(backend).start()
+        else:
+            try:
+                capture = _start_real_capture_with_preflight(backend, args)
+            except Exception as exc:
+                print("\nHARDWARE CONNECTION/PREFLIGHT FAILED")
+                print(f"  {type(exc).__name__}: {exc}")
+                print("  Check board power/radio/COM port first. If the board "
+                      "opens, inspect the generated preflight report for flat, "
+                      "amplitude or jump failures.")
+                return 1
+            if capture is None:
+                return 1
+            print(f"Recording started after connection and signal checks "
+                  f"(board_id={args.board_id})")
     elif not args.dry_run:
         BCI = _load_bci()
         BCI.start(BID=args.board_id, port=args.serial_port, plot_domain="f")
@@ -1259,6 +1347,7 @@ def run_example(args):
                     print(f"  {len(X)} epochs  (LEFT {n0} / RIGHT {n1})")
                     print(f"  calibration -> {npz}")
                     print(f"  next:  python ML/train_local.py {args.subject}")
+                _generate_saved_recording_report(npz, args)
         try:
             pygame.quit()
         except Exception:
@@ -1423,9 +1512,17 @@ def cli():
                     help="idle trials in universal body-map recording (default 15)")
     ap.add_argument("--cue", type=float, default=5.0, help="seconds per cue")
     ap.add_argument("--rest", type=float, default=2.0, help="seconds between cues")
-    ap.add_argument("--board-id", type=int, default=-2,
-                    help="-2 streaming board (OpenBCI GUI) · 0 Cyton · -1 synthetic")
+    ap.add_argument("--board-id", type=int, default=0,
+                    help="0 direct Cyton (default) · -2 streaming board from "
+                         "an OpenBCI GUI/BrainFlow producer · -1 synthetic")
     ap.add_argument("--serial-port", default=None, help="e.g. COM4")
+    ap.add_argument("--preflight-seconds", type=float, default=6.0,
+                    help="still baseline checked before any real recording")
+    ap.add_argument("--force-record", action="store_true",
+                    help="continue after failed signal-quality preflight; for "
+                         "deliberate debugging only")
+    ap.add_argument("--report-dir", default=None,
+                    help="quality-report root; default reports/recording_quality")
     ap.add_argument("--dry-run", action="store_true",
                     help="run the UI and cues without recording EEG")
     ap.add_argument("--list", action="store_true", help="list example scripts")

@@ -13,6 +13,7 @@ here. No gameplay EEG is treated as training truth unless the user explicitly
 marks it; this module only records feedback and never retrains automatically.
 """
 
+import glob
 import json
 import re
 import time
@@ -197,6 +198,242 @@ class PredictionPerformanceLogger:
             self._events.close()
         except Exception:
             pass
+
+
+class TrainingDataPerformance:
+    """Inspect saved calibration epochs, quality screening and predictions.
+
+    ``recordings`` accepts paths, directories or glob patterns. An optional
+    saved ``intent_model.joblib`` adds intended-versus-predicted rows. Those
+    predictions are explicitly training-data previews, not held-out evidence.
+    """
+
+    def __init__(self, recordings, model_path=None, screening_kw=None):
+        patterns = ([recordings] if isinstance(recordings, (str, Path))
+                    else list(recordings))
+        files = []
+        for value in patterns:
+            path = Path(value)
+            if path.is_dir():
+                matches = sorted(path.glob("calib_*.npz"))
+            else:
+                matches = [Path(item) for item in sorted(glob.glob(str(value)))]
+                if path.is_file() and path not in matches:
+                    matches.append(path)
+            files.extend(matches)
+        # Stable deduplication is important when a directory and glob overlap.
+        self.files = []
+        seen = set()
+        for path in files:
+            resolved = str(Path(path).resolve())
+            if resolved not in seen:
+                self.files.append(Path(path))
+                seen.add(resolved)
+        if not self.files:
+            raise FileNotFoundError(
+                "no training NPZ files matched: "
+                + ", ".join(str(value) for value in patterns))
+
+        Xs, labels_all, session_ids, subjects = [], [], [], []
+        fs_values, montages, channel_label_sets = set(), set(), set()
+        for session_id, path in enumerate(self.files):
+            with np.load(path, allow_pickle=True) as data:
+                X = np.asarray(data["X"], dtype=np.float64)
+                labels = np.asarray(data["labels"]).astype(str)
+                if X.ndim != 3 or X.shape[0] != len(labels):
+                    raise ValueError(
+                        f"{path} has inconsistent X/labels shapes: "
+                        f"{X.shape} and {labels.shape}")
+                Xs.append(X)
+                labels_all.extend(labels.tolist())
+                session_ids.extend([session_id] * len(X))
+                fs_values.add(int(np.asarray(data["fs"]).item()))
+                montages.add(str(np.asarray(data["montage"]).item()))
+                if "channel_labels" in data:
+                    channel_label_sets.add(tuple(
+                        np.asarray(data["channel_labels"]).astype(str).tolist()))
+                subject = (str(np.asarray(data["subject"]).item())
+                           if "subject" in data else "unknown")
+                subjects.extend([subject] * len(X))
+        if len(fs_values) != 1:
+            raise ValueError(f"training files use different sample rates: {fs_values}")
+        if len(montages) != 1:
+            raise ValueError(f"training files use different montages: {montages}")
+
+        self.X = np.concatenate(Xs)
+        self.labels = np.asarray(labels_all, dtype=str)
+        self.sessions = np.asarray(session_ids, dtype=int)
+        self.subjects = np.asarray(subjects, dtype=str)
+        self.fs = fs_values.pop()
+        self.montage = montages.pop()
+        if len(channel_label_sets) > 1:
+            raise ValueError("training files use different channel-label orders")
+        if channel_label_sets:
+            self.channel_labels = list(channel_label_sets.pop())
+        else:
+            try:
+                from ML.montage import get
+                self.channel_labels = list(get(self.montage).get("labels", []))
+            except Exception:
+                self.channel_labels = [f"CH{index + 1}"
+                                       for index in range(self.X.shape[1])]
+        if len(self.channel_labels) != self.X.shape[1]:
+            self.channel_labels = [f"CH{index + 1}"
+                                   for index in range(self.X.shape[1])]
+        self.class_names = sorted(set(self.labels.tolist()))
+        self.class_counts = {
+            name: int((self.labels == name).sum()) for name in self.class_names}
+
+        from ML.quality import screen_trials
+        self.screening_kw = {
+            "amp_uv": 400.0, "jump_uv": 75.0,
+            "flat_uv": .05, "z_max": 4.0,
+            **dict(screening_kw or {}),
+        }
+        self.screening = screen_trials(
+            self.X, self.labels, fs=self.fs, verbose=False,
+            **self.screening_kw)
+        self.keep = np.asarray(self.screening["keep"], dtype=bool)
+        self.drop_reasons = []
+        for index in range(len(self.X)):
+            self.drop_reasons.append([
+                name for name, mask in self.screening["reasons"].items()
+                if bool(mask[index])])
+        self.retained_counts = {
+            name: int(((self.labels == name) & self.keep).sum())
+            for name in self.class_names}
+
+        # Per-channel attribution for troubleshooting all-trial rejection. The
+        # generic screener rejects a trial when ANY channel fails; these values
+        # reveal whether one dead/noisy electrode is responsible for all trials
+        # or the complete recording has a scaling/reference problem.
+        centred = self.X - self.X.mean(axis=2, keepdims=True)
+        peak_by_trial_channel = np.max(np.abs(centred), axis=2)
+        std_by_trial_channel = np.std(self.X, axis=2)
+        jump_by_trial_channel = np.max(np.abs(np.diff(self.X, axis=2)), axis=2)
+        self.channel_diagnostics = []
+        for channel in range(self.X.shape[1]):
+            peak = peak_by_trial_channel[:, channel]
+            std = std_by_trial_channel[:, channel]
+            jump = jump_by_trial_channel[:, channel]
+            self.channel_diagnostics.append({
+                "index": channel,
+                "label": self.channel_labels[channel],
+                "peak_median_uv": float(np.median(peak)),
+                "peak_p95_uv": float(np.percentile(peak, 95)),
+                "peak_max_uv": float(np.max(peak)),
+                "amplitude_fail_trials": int(
+                    (peak > self.screening_kw["amp_uv"]).sum()),
+                "std_median_uv": float(np.median(std)),
+                "std_min_uv": float(np.min(std)),
+                "std_max_uv": float(np.max(std)),
+                "flat_fail_trials": int(
+                    (std < self.screening_kw["flat_uv"]).sum()),
+                "jump_median_uv": float(np.median(jump)),
+                "jump_p95_uv": float(np.percentile(jump, 95)),
+                "jump_max_uv": float(np.max(jump)),
+                "jump_fail_trials": int(
+                    (jump > self.screening_kw["jump_uv"]).sum()),
+            })
+        self.trial_signal_metrics = {
+            "peak_median_uv": float(np.median(
+                np.max(peak_by_trial_channel, axis=1))),
+            "peak_max_uv": float(np.max(peak_by_trial_channel)),
+            "jump_median_uv": float(np.median(
+                np.max(jump_by_trial_channel, axis=1))),
+            "jump_max_uv": float(np.max(jump_by_trial_channel)),
+        }
+
+        self.model_path = str(model_path) if model_path else None
+        self.predictions = None
+        self.training_accuracy = None
+        self.balanced_accuracy = None
+        self.confusion_matrix = None
+        self.model_error = None
+        if model_path:
+            self._predict(model_path)
+
+    @staticmethod
+    def _physical_label(value):
+        text = str(value)
+        return text.split("::", 1)[1] if text.startswith("intent::") else text
+
+    def _predict(self, model_path):
+        try:
+            import joblib
+            bundle = joblib.load(model_path)
+            if not isinstance(bundle, dict) or "model" not in bundle:
+                raise ValueError("model file is not a supported joblib bundle")
+            model = bundle["model"]
+            raw = np.asarray(model.predict(self.X), dtype=int)
+            class_map = {int(k): str(v)
+                         for k, v in dict(bundle.get("class_map", {})).items()}
+            self.predictions = np.asarray(
+                [class_map.get(int(index), f"class_{index}") for index in raw],
+                dtype=str)
+            intended = np.asarray(
+                [self._physical_label(value) for value in self.labels], dtype=str)
+            self.training_accuracy = float(np.mean(self.predictions == intended))
+            names = sorted(set(intended.tolist()) | set(self.predictions.tolist()))
+            recalls, matrix = [], []
+            for true_name in names:
+                true_mask = intended == true_name
+                row = [int((true_mask & (self.predictions == predicted)).sum())
+                       for predicted in names]
+                matrix.append(row)
+                recalls.append(row[names.index(true_name)] / max(1, int(true_mask.sum())))
+            self.balanced_accuracy = float(np.mean(recalls)) if recalls else None
+            self.confusion_matrix = {"classes": names, "matrix": matrix}
+        except Exception as exc:
+            self.model_error = f"{type(exc).__name__}: {exc}"
+
+    def trial(self, index):
+        if not len(self.X):
+            raise IndexError("training dataset is empty")
+        index = int(index) % len(self.X)
+        predicted = (None if self.predictions is None
+                     else str(self.predictions[index]))
+        return {
+            "index": index, "window": self.X[index],
+            "label": str(self.labels[index]),
+            "intended": self._physical_label(self.labels[index]),
+            "predicted": predicted,
+            "correct": (None if predicted is None else
+                        predicted == self._physical_label(self.labels[index])),
+            "keep": bool(self.keep[index]),
+            "reasons": list(self.drop_reasons[index]),
+            "subject": str(self.subjects[index]),
+            "session": int(self.sessions[index]),
+            "file": str(self.files[int(self.sessions[index])]),
+        }
+
+    def report(self):
+        return {
+            "files": [str(path) for path in self.files],
+            "trials": int(len(self.X)), "sessions": int(len(self.files)),
+            "subjects": sorted(set(self.subjects.tolist())),
+            "fs": int(self.fs), "montage": self.montage,
+            "channel_labels": list(self.channel_labels),
+            "shape": list(self.X.shape),
+            "kept": int(self.keep.sum()),
+            "dropped": int((~self.keep).sum()),
+            "drop_rate": float((~self.keep).mean()) if len(self.keep) else 0.0,
+            "drop_reason_counts": {
+                name: int(np.asarray(mask, dtype=bool).sum())
+                for name, mask in self.screening["reasons"].items()
+            },
+            "screening_thresholds": dict(self.screening_kw),
+            "trial_signal_metrics": dict(self.trial_signal_metrics),
+            "channel_diagnostics": list(self.channel_diagnostics),
+            "class_counts": dict(self.class_counts),
+            "retained_counts": dict(self.retained_counts),
+            "model": self.model_path, "model_error": self.model_error,
+            "training_accuracy": self.training_accuracy,
+            "training_balanced_accuracy": self.balanced_accuracy,
+            "confusion_matrix": self.confusion_matrix,
+            "warning": ("model metrics use training recordings and are not "
+                        "held-session or held-subject validation"),
+        }
 
 
 class GameplayMonitor:

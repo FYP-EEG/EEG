@@ -138,24 +138,39 @@ def capture(board_name, serial_port, signal, seconds, window):
     rows = BoardShim.get_eeg_channels(bid)
     board = BoardShim(bid, params)
     board.prepare_session()
+    streaming = False
+    try:
+        if signal and board_name.startswith("cyton"):
+            desc = CYTON_TEST_SIGNALS.get(signal, ("unknown", None, None))[0]
+            print(f"  configuring board: {signal!r} -> {desc}")
+            board.config_board(signal)
+            time.sleep(0.5)
 
-    if signal and board_name.startswith("cyton"):
-        desc = CYTON_TEST_SIGNALS.get(signal, ("unknown", None, None))[0]
-        print(f"  configuring board: {signal!r} -> {desc}")
-        board.config_board(signal)
-        time.sleep(0.5)
-
-    board.start_stream()
-    need = int(seconds * fs) + window
-    t0 = time.time()
-    while time.time() - t0 < seconds + 2.0:
-        if board.get_board_data_count() >= need:
-            break
-        time.sleep(0.1)
-    data = board.get_board_data()
-    board.stop_stream()
-    board.release_session()
-    return data, fs, rows
+        board.start_stream()
+        streaming = True
+        need = int(seconds * fs) + window
+        t0 = time.time()
+        while time.time() - t0 < seconds + 2.0:
+            if board.get_board_data_count() >= need:
+                break
+            time.sleep(0.1)
+        data = board.get_board_data()
+        return data, fs, rows
+    finally:
+        try:
+            if streaming:
+                board.stop_stream()
+            # The commands 0,-,=,p,[,] route all channels to internal test
+            # inputs and persist after this process exits. Restore normal input
+            # before releasing the port so the next MI recording cannot
+            # silently capture ground or square-wave calibration data.
+            if signal and board_name.startswith("cyton") and board.is_prepared():
+                board.config_board("d")
+                time.sleep(.25)
+                print("  restored Cyton channels to default normal inputs")
+        finally:
+            if board.is_prepared():
+                board.release_session()
 
 
 def per_channel_report(data, fs, rows, window, expect_kind, expect_map,

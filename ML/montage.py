@@ -84,14 +84,29 @@ CYTON_8_MI = {
     "motor_lateral": [2, 4],     # C3, C4 -- the pair that actually carries ERD
 }
 
+# Recorded lab montage reported 12/11/2026. This is predominantly occipital and
+# is suitable for visual/SSVEP inspection, not a validated finger-MI montage.
+# Keeping it explicit prevents the performance monitor from mislabelling these
+# channels as FC3/FC4/C3/Cz/C4/CP3/CP4/Pz. Fp1/Fp2 remain artifact channels.
+CYTON_8_FP_OCCIPITAL = {
+    "name": "cyton8_fp_occipital",
+    "n_channels": 8,
+    "labels": ["Fp1", "Fp2", "O1", "Oz", "O2", "PO3", "PO4", "Pz"],
+    "ssvep": [2, 3, 4, 5, 6, 7],
+    "artifact": [0, 1],
+    "motor": [],                 # no C3/C4/Cz sensorimotor electrodes
+    "motor_lateral": [],
+}
+
 # Explicit rather than a comprehension (Brian, 6/10/2026) - a typo in a "name"
 # field used to silently register a montage under the wrong key, which is how
 # CYTON_8_SSVEP spent a while registered as "cyton8_motor".
 MONTAGES = {
     "benchmark64":  BENCHMARK_64,
     "cyton8_ssvep": CYTON_8_SSVEP,
-    "cyton8_motor": CYTON_8_MOTOR,
-    "cyton8_mi":    CYTON_8_MI,
+    "cyton8_motor":         CYTON_8_MOTOR,
+    "cyton8_mi":            CYTON_8_MI,
+    "cyton8_fp_occipital":  CYTON_8_FP_OCCIPITAL,
 }
 
 # Guard the thing the explicit dict is meant to prevent: a key that disagrees

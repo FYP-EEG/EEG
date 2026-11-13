@@ -6,12 +6,17 @@ Purpose: separate live dashboard for gameplay EEG and prediction performance.
 Start a game, choose GAME, then run in another terminal:
     python example/performance_monitor.py
 
-Optional:
+Optional live modes:
     python example/performance_monitor.py --app rockpaperscissors
     python example/performance_monitor.py --session runtime_logs/.../<stamp>
 
-The dashboard only reads local files written by bci_sdk.performance. It does not
-classify, modify the model, or automatically feed manual labels into training.
+Training-data mode:
+    python example/performance_monitor.py --training "dataset/motor_intent/calib_brian_*.npz"
+    python example/performance_monitor.py --training dataset/motor_intent --model profiles/.../intent_model.joblib
+
+The dashboard only reads local files. It does not modify the model or
+automatically feed manual labels into training. Model results shown for saved
+training epochs are explicitly previews, not held-session validation.
 """
 
 import argparse
@@ -53,10 +58,11 @@ def _draw_card(surface, rect, title, value, color, font, small):
     surface.blit(text, (rect.x + 12, rect.y + 31))
 
 
-def _draw_eeg(surface, rect, eeg, channels, fs, font, small):
+def _draw_eeg(surface, rect, eeg, channels, fs, font, small,
+              title_text="LATEST 3-SECOND EEG WINDOW"):
     pygame.draw.rect(surface, (10, 23, 32), rect, border_radius=12)
     pygame.draw.rect(surface, (49, 78, 91), rect, 1, border_radius=12)
-    title = font.render("LATEST 3-SECOND EEG WINDOW", True, (220, 232, 235))
+    title = font.render(title_text, True, (220, 232, 235))
     surface.blit(title, (rect.x + 14, rect.y + 10))
     if eeg is None or np.asarray(eeg).ndim != 2:
         waiting = font.render("Waiting for live EEG windows...", True, (244, 201, 93))
@@ -96,13 +102,159 @@ def _draw_eeg(surface, rect, eeg, channels, fs, font, small):
     surface.blit(note, note.get_rect(bottomright=(rect.right - 12, rect.bottom - 7)))
 
 
+def _run_training_dashboard(training):
+    """Interactive inspection of saved labelled EEG trials."""
+    pygame.init()
+    window = pygame.display.set_mode((1100, 720), pygame.RESIZABLE)
+    pygame.display.set_caption("BCI Training Data Performance Monitor")
+    clock = pygame.time.Clock()
+    big = pygame.font.SysFont("dejavusans,arial", 25, bold=True)
+    font = pygame.font.SysFont("dejavusans,arial", 18, bold=True)
+    small = pygame.font.SysFont("dejavusans,arial", 13)
+    report = training.report()
+    channels = report.get("channel_labels", [])
+    index = 0
+    kept_only = False
+    running = True
+
+    def available_indices():
+        if kept_only:
+            values = np.flatnonzero(training.keep).tolist()
+            return values or list(range(len(training.X)))
+        return list(range(len(training.X)))
+
+    while running:
+        indices = available_indices()
+        if index not in indices:
+            index = indices[0]
+        position = indices.index(index)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and
+                    event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE)):
+                running = False
+            elif event.type == pygame.VIDEORESIZE:
+                window = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RIGHT:
+                    index = indices[(position + 1) % len(indices)]
+                elif event.key == pygame.K_LEFT:
+                    index = indices[(position - 1) % len(indices)]
+                elif event.key == pygame.K_HOME:
+                    index = indices[0]
+                elif event.key == pygame.K_END:
+                    index = indices[-1]
+                elif event.key == pygame.K_k:
+                    kept_only = not kept_only
+                    index = available_indices()[0]
+
+        trial = training.trial(index)
+        width, height = window.get_size()
+        window.fill((7, 16, 24))
+        heading = big.render("TRAINING DATA PERFORMANCE", True, (235, 245, 247))
+        window.blit(heading, (22, 16))
+        source = f"{report['sessions']} file(s) · {', '.join(report['subjects'])} · {report['montage']}"
+        window.blit(small.render(source[-125:], True, (125, 151, 160)), (23, 49))
+
+        train_acc = report.get("training_balanced_accuracy")
+        values = [
+            ("TRIALS", report["trials"], (220, 232, 235)),
+            ("KEPT", report["kept"], (125, 219, 155)),
+            ("DROPPED", report["dropped"], (239, 165, 139)),
+            ("CLASSES", len(report["class_counts"]), (244, 201, 93)),
+            ("MODEL PREVIEW", "--" if train_acc is None else f"{train_acc:.1%}",
+             (71, 215, 208)),
+        ]
+        gap = 10
+        card_w = (width - 44 - gap * 4) // 5
+        for card_index, (title, value, color) in enumerate(values):
+            _draw_card(window,
+                       pygame.Rect(22 + card_index * (card_w + gap), 76,
+                                   card_w, 72),
+                       title, value, color, font, small)
+
+        intended = trial["intended"].replace("_", " ").upper()
+        predicted = ("--" if trial["predicted"] is None else
+                     trial["predicted"].replace("_", " ").upper())
+        quality = "KEEP" if trial["keep"] else "DROP"
+        reasons = "none" if not trial["reasons"] else ", ".join(trial["reasons"])
+        prediction_color = ((125, 219, 155) if trial["correct"] is True else
+                            (255, 128, 111) if trial["correct"] is False else
+                            (160, 184, 192))
+        line = (f"TRIAL {index + 1}/{len(training.X)} · intended={intended} · "
+                f"predicted={predicted} · quality={quality}")
+        window.blit(font.render(line, True, prediction_color), (24, 160))
+        window.blit(small.render(
+            f"subject={trial['subject']} · rejection reasons={reasons}",
+            True, (190, 211, 216)), (25, 190))
+        counts = "  |  ".join(
+            f"{name.replace('intent::', '')}: {report['retained_counts'][name]}/{count}"
+            for name, count in report["class_counts"].items())
+        window.blit(small.render(counts[:150], True, (145, 170, 179)), (25, 211))
+        reason_totals = "  |  ".join(
+            f"{name}: {count}" for name, count
+            in report.get("drop_reason_counts", {}).items() if count)
+        if not reason_totals:
+            reason_totals = "drop reasons: none"
+        window.blit(small.render(reason_totals[:150], True, (239, 165, 139)),
+                    (25, 229))
+
+        _draw_eeg(window, pygame.Rect(20, 255, width - 40,
+                                      max(160, height - 295)),
+                  trial["window"], channels, report["fs"], font, small,
+                  title_text="SELECTED LABELLED TRAINING EPOCH")
+        controls = ("Left/Right: trial · Home/End: first/last · "
+                    f"K: {'show all' if kept_only else 'kept only'} · Esc: close")
+        window.blit(small.render(controls, True, (145, 170, 179)),
+                    (24, height - 27))
+        warning = small.render(
+            "MODEL PREVIEW uses training data; it is not held-session accuracy.",
+            True, (239, 165, 139))
+        window.blit(warning, warning.get_rect(bottomright=(width - 22, height - 8)))
+        pygame.display.flip()
+        clock.tick(30)
+
+    pygame.quit()
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Live EEG/model performance dashboard")
-    parser.add_argument("--root", default=str(ROOT / "runtime_logs"))
+    parser.add_argument("--root", default=str(ROOT / "runtime_logs"),
+                        help="live gameplay log root")
     parser.add_argument("--app", default=None)
     parser.add_argument("--session", default=None)
+    parser.add_argument("--training", nargs="+", default=None,
+                        help="training NPZ path(s), directories or glob patterns")
+    parser.add_argument("--model", default=None,
+                        help="optional intent_model.joblib for training preview")
+    parser.add_argument("--user", default=None,
+                        help="resolve model from this runtime profile user")
+    parser.add_argument("--intents", default=None,
+                        help="comma-separated intents used with --user")
+    parser.add_argument("--amp-uv", type=float, default=400.0,
+                        help="gross-amplitude screening threshold")
+    parser.add_argument("--jump-uv", type=float, default=75.0,
+                        help="sample-to-sample jump threshold")
+    parser.add_argument("--flat-uv", type=float, default=.05,
+                        help="per-channel standard-deviation floor")
+    parser.add_argument("--z-max", type=float, default=4.0,
+                        help="within-class robust band-power z threshold")
     args = parser.parse_args()
     log_root = Path(args.root)
+
+    if args.training:
+        from bci_sdk.performance import TrainingDataPerformance
+        model_path = args.model
+        if model_path is None and args.user and args.intents:
+            from ML.motor_intent import intent_profile_dir
+            intents = [value.strip() for value in args.intents.split(",")
+                       if value.strip()]
+            model_path = intent_profile_dir(args.user, intents) / "intent_model.joblib"
+        training = TrainingDataPerformance(
+            args.training, model_path=model_path,
+            screening_kw={"amp_uv": args.amp_uv, "jump_uv": args.jump_uv,
+                          "flat_uv": args.flat_uv, "z_max": args.z_max})
+        return _run_training_dashboard(training)
 
     pygame.init()
     window = pygame.display.set_mode((1100, 720), pygame.RESIZABLE)

@@ -244,28 +244,67 @@ class BrainFlowBackend:
 
     def __init__(self, board_id=0, serial_port="COM4", n_channels=8,
                  ip_address="225.1.1.1", ip_port=6677, master_board=-1,
-                 scale_to_uv=True):
+                 scale_to_uv=True, reset_channels=True):
         from brainflow.board_shim import BoardShim, BrainFlowInputParams  # noqa
         self.BoardShim = BoardShim
         params = BrainFlowInputParams()
         params.serial_port = serial_port
         params.ip_address = ip_address
         params.ip_port = ip_port
+        # BrainFlow's STREAMING_BOARD (-2) has no channel descriptor of its
+        # own. It must be told which real board produced the UDP packets, and
+        # sampling/channel metadata must be queried from that master board.
+        if board_id == -2 and master_board == -1:
+            master_board = 0                 # this project streams 8-ch Cyton
         params.master_board = master_board
         self.board = BoardShim(board_id, params)
         self.board_id = board_id
+        self.master_board = master_board
+        self.descriptor_board_id = (master_board
+                                    if board_id == -2 else board_id)
         self.n_channels = n_channels
         self.scale_to_uv = scale_to_uv
+        self.reset_channels = bool(reset_channels)
         self.fs = 250
         self.eeg_channels = None
 
     def start(self):
         self.board.prepare_session()
-        self.board.start_stream(45000)
-        self.fs = self.BoardShim.get_sampling_rate(self.board_id)
-        self.eeg_channels = self.BoardShim.get_eeg_channels(
-            self.board_id)[:self.n_channels]
-        time.sleep(1.0)
+        try:
+            # Cyton test-signal and powered-down channel settings persist until
+            # reset. Always return standalone recordings to the documented
+            # normal/default ADS1299 inputs so a previous hardware self-test
+            # cannot become 119 trials of square waves or zero-valued channels.
+            if self.board_id == 0 and self.reset_channels:
+                self.board.config_board("d")
+                time.sleep(.25)
+            self.board.start_stream(45000)
+            self.fs = self.BoardShim.get_sampling_rate(
+                self.descriptor_board_id)
+            self.eeg_channels = self.BoardShim.get_eeg_channels(
+                self.descriptor_board_id)[:self.n_channels]
+
+            # Opening a socket/COM handle is not enough. Refuse to start a
+            # timed calibration unless actual samples arrive. This catches a
+            # missing GUI UDP producer and a powered-off/unpaired Cyton before
+            # the user completes 119 cues that cannot be saved.
+            deadline = time.monotonic() + 6.0
+            while time.monotonic() < deadline:
+                if self.board.get_board_data_count() > 0:
+                    return
+                time.sleep(.05)
+            mode = ("streaming board: start the OpenBCI GUI/BrainFlow producer"
+                    if self.board_id == -2 else
+                    "direct Cyton: check power, dongle, radio and serial port")
+            raise RuntimeError(f"board opened but no EEG samples arrived ({mode})")
+        except Exception:
+            try:
+                if self.board.is_prepared():
+                    self.board.stop_stream()
+                    self.board.release_session()
+            except Exception:
+                pass
+            raise
 
     def stop(self):
         try:

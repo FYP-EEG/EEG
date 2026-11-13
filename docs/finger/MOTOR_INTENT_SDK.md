@@ -65,6 +65,18 @@ pool automatically.
 Running the same command with `--dry-run` writes only under `dry_runs/` and prints a
 warning not to train from synthetic data.
 
+Before every real MI recording, `data_record.py` now performs a mandatory staged preflight:
+
+1. open the requested board/COM port;
+2. verify that real samples arrive;
+3. collect a six-second still baseline;
+4. check eight channels, effective sampling rate, finite values, flat channels, gross peak amplitude and sample jumps;
+5. print per-channel failures and concrete debugging guidance;
+6. save preflight HTML/JSON under `reports/recording_quality/<subject>/`;
+7. block the timed protocol on failure.
+
+`--force-record` can continue after a failed signal check for deliberate debugging, but the output is explicitly warned as potentially unusable. After the final NPZ is saved, the multi-recording inspector automatically creates an HTML/JSON quality report for that recording in the same report directory.
+
 ## Start page and in-app Calibration page
 
 All three demos open on a two-choice **GAME / CALIBRATION** landing page. Both choices
@@ -101,6 +113,12 @@ Realistic UI: 60 action + 12 idle (12 per action)
 ```
 
 The external `EEG/data_record.py --intent-mi` workflow remains available for lab scripting and reproducible command-line sessions.
+
+### Raw versus filtered storage
+
+`EEG/data_record.py` saves the epoched BrainFlow samples in microvolts without software band-pass filtering, normalization, covariance conversion or tangent-space transformation. The NPZ is therefore the reusable raw sensor-level epoch data (apart from the Cyton/ADC and BrainFlow's count-to-microvolt conversion). Trial screening filters temporary copies only. The Riemannian training pipeline applies its 8–30 Hz filter and feature transformations during `fit()`/`predict()`; those transformed arrays are not written back into the recording NPZ.
+
+Before direct Cyton recording, the backend now sends the Cyton `d` command to restore default normal channel inputs. `tools/test_signal_check.py` also restores `d` after internal-ground or square-wave self-tests. This prevents persistent hardware test-signal settings from being mistaken for human EEG in the next calibration.
 
 ## Supported intentions
 
@@ -242,6 +260,49 @@ python example/performance_monitor.py
 ```
 
 It visualizes the latest eight-channel EEG window, prediction state, confidence, dispatch/rejection counts and manually marked accuracy. Use `--app rockpaperscissors` or `--session <directory>` to select a specific stream.
+
+Generate an offline HTML/JSON usefulness report for several recordings (including partial sessions):
+
+```bash
+python tools/inspect_training_recordings.py \
+  --input "dataset/motor_intent/calib_brian_*.npz" \
+  --out reports/training_data_brian.html --open
+```
+
+The report shows each file's trial count versus 119, missing universal labels, class balance, retained/dropped trials, rejection reasons, montage suitability and representative eight-channel traces. A per-channel table attributes amplitude, flat and sample-jump failures and reports median/p95/max values, making it possible to distinguish one dead electrode from a recording-wide reference/scaling problem. `CANDIDATE` means it passes software quality/count checks only; it is not proof of MI or cross-session accuracy.
+
+The same live dashboard can inspect saved training data interactively:
+
+```bash
+python example/performance_monitor.py \
+  --training "dataset/motor_intent/calib_brian_*.npz"
+```
+
+Add a model to show intended-versus-predicted training previews:
+
+```bash
+python example/performance_monitor.py \
+  --training dataset/motor_intent \
+  --user brian --intents left_hand,right_hand,both_feet
+```
+
+Training mode shows label counts, retained/dropped trials, aggregate screening reasons, the selected 8-channel epoch and optional model predictions. It reads `channel_labels` from each NPZ instead of assuming the motor montage. Left/Right changes trial and K toggles kept-only view. Model metrics in this view use training recordings and are not held-session or held-subject validation.
+
+For the lab order `Fp1,Fp2,O1,Oz,O2,PO3,PO4,Pz`, record future sessions with:
+
+```bash
+python EEG/data_record.py ... --montage cyton8_fp_occipital
+```
+
+Correct old metadata without changing EEG samples:
+
+```bash
+python EEG/relabel_recording_montage.py \
+  --input "dataset/motor_intent/calib_brian_*.npz" \
+  --montage cyton8_fp_occipital
+```
+
+The default writes corrected copies under `dataset/motor_intent/montage_fixed/`, preventing a wildcard from mixing old and corrected metadata. Review them before optionally using `--in-place`, which keeps `.original.npz` backups. This montage contains no C3/C4/Cz sensorimotor sites and therefore should not be presented as a validated finger-MI montage.
 
 ## Public Python API
 
