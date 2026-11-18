@@ -65,17 +65,25 @@ pool automatically.
 Running the same command with `--dry-run` writes only under `dry_runs/` and prints a
 warning not to train from synthetic data.
 
-Before every real MI recording, `data_record.py` now performs a mandatory staged preflight:
+Before every real direct-Cyton MI recording, `data_record.py` calls the mandatory gate in `startup/check_headband.py` before loading the app or starting any cue:
 
-1. open the requested board/COM port;
-2. verify that real samples arrive;
-3. collect a six-second still baseline;
-4. check eight channels, effective sampling rate, finite values, flat channels, gross peak amplitude and sample jumps;
-5. print per-channel failures and concrete debugging guidance;
-6. save preflight HTML/JSON under `reports/recording_quality/<subject>/`;
-7. block the timed protocol on failure.
+1. require explicit confirmation that SRB/reference, BIAS and all eight leads are firmly attached (software cannot physically inspect a connector);
+2. transfer internal ground on all 8 channels;
+3. transfer the known approximately 2 Hz square wave on all 8 channels;
+4. restore Cyton defaults with `d`, which returns every channel to Normal input and powers default channels on;
+5. capture normal electrodes and require all 8 channels to pass sample-rate, finite, flatness, amplitude and sample-jump checks;
+6. save startup HTML/JSON under `reports/startup/<subject>/` and block recording if any stage fails.
 
-`--force-record` can continue after a failed signal check for deliberate debugging, but the output is explicitly warned as potentially unusable. After the final NPZ is saved, the multi-recording inspector automatically creates an HTML/JSON quality report for that recording in the same report directory.
+Run the same gate independently before non-recorder headset use:
+
+```bash
+python startup/check_headband.py --port COM8 --montage cyton8_motor \
+  --confirm-srb-bias --out reports/startup/headband_pre_use
+```
+
+After startup, `data_record.py` opens the actual recording backend and repeats a fresh still-baseline preflight, saving HTML/JSON under `reports/recording_quality/<subject>/`. `--force-record` can continue after that live signal check for deliberate debugging, but it cannot bypass a failed all-channel startup gate.
+
+After the NPZ is saved, the inspection HTML/JSON contains a recording `ACCEPT`/`REJECT` indicator, ordered rejection-step indicators (amplitude, flatness, jump, within-class outlier and noncompliance), and a per-trial table naming both the rejecting rules and responsible channels. This makes a rejection traceable instead of reporting only one aggregate dropped-trial count.
 
 ## Start page and in-app Calibration page
 
@@ -261,7 +269,41 @@ python example/performance_monitor.py
 
 It visualizes the latest eight-channel EEG window, prediction state, confidence, dispatch/rejection counts and manually marked accuracy. Use `--app rockpaperscissors` or `--session <directory>` to select a specific stream.
 
-Generate an offline HTML/JSON usefulness report for several recordings (including partial sessions):
+## One-command layered debugger
+
+Use one entry point to localize the first failing layer across live hardware, saved raw NPZ, 8–30 Hz filtering, within-session class separability, held-session SVM/logistic-regression comparison and optional gameplay logs:
+
+```bash
+python tools/debug_bci_pipeline.py \
+  --port COM8 --montage cyton8_motor \
+  --input "dataset/motor_intent/calib_brian_*.npz" \
+  --out reports/brian_pipeline_debug
+```
+
+Offline-only use:
+
+```bash
+python tools/debug_bci_pipeline.py \
+  --input "dataset/motor_intent/calib_brian_*.npz" \
+  --out reports/brian_pipeline_debug
+```
+
+Compare the NPZ sessions with a continuous recording from another project in the same report:
+
+```bash
+python tools/debug_bci_pipeline.py \
+  --input "dataset/motor_intent/calib_brian_*.npz" \
+  --reference-csv "path/to/other_project_recording.csv" \
+  --reference-columns "Fp1,Fp2,Fz,Cz,FC1,FC2,C3,C4" \
+  --reference-time-column session_time --reference-unit uv \
+  --out reports/brian_pipeline_debug
+```
+
+The CSV sample rate is inferred from `session_time`; pass `--reference-fs 250` if its timestamps are unsuitable. Set `--reference-time-unit ms` when timestamps are milliseconds, and set `--reference-unit mv` or `v` when the EEG columns are not already in µV. For raw device counts or another documented unit, pass the manufacturer's multiplier with `--reference-scale-to-uv`; this overrides `--reference-unit`, and the applied multiplier is recorded in report details. Do not guess that multiplier from one row. The tool applies the same gross amplitude/flat/jump limits to non-overlapping windows, draws every montage separately, overlays only identically named nodes (for these montages: C3, Cz and C4), and reports Welch band-power comparisons for those common nodes. It warns when common-node 1–40 Hz RMS is extremely low because ratios against a near-zero denominator can be misleading. It never silently treats Fp1 as FC3 or another unlike position. A reference `PASS` only means the CSV passes gross raw-signal checks; it does not prove MI usefulness or accuracy.
+
+The command writes one HTML and one JSON report and prints `FIRST FAILURE`. Downstream layers are skipped after an upstream raw failure unless `--force-downstream` is deliberately supplied; forced downstream results are diagnostic only and never override the upstream failure. The older specialized scripts remain reusable implementation modules, but normal troubleshooting should begin with this unified command.
+
+Generate a detailed offline HTML/JSON usefulness report for several recordings (including partial sessions):
 
 ```bash
 python tools/inspect_training_recordings.py \

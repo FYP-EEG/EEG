@@ -3,6 +3,10 @@ Author: Anson
 Created on: 19/10/2026
 Purpose: gameplay prediction feedback logging and live monitor data export.
 
+Edited by Anson
+Date: 18/11/2026
+Purpose: expose ordered NPZ rejection steps and per-trial/channel indicators.
+
 Controls used by the three pygame demos while GAME is active:
     Space       pause/resume gameplay and BCI dispatch
     Left click  mark the latest classified prediction correct
@@ -311,6 +315,11 @@ class TrainingDataPerformance:
         peak_by_trial_channel = np.max(np.abs(centred), axis=2)
         std_by_trial_channel = np.std(self.X, axis=2)
         jump_by_trial_channel = np.max(np.abs(np.diff(self.X, axis=2)), axis=2)
+        self.channel_failure_masks = {
+            "amplitude": peak_by_trial_channel > self.screening_kw["amp_uv"],
+            "flat": std_by_trial_channel < self.screening_kw["flat_uv"],
+            "jump": jump_by_trial_channel > self.screening_kw["jump_uv"],
+        }
         self.channel_diagnostics = []
         for channel in range(self.X.shape[1]):
             peak = peak_by_trial_channel[:, channel]
@@ -342,6 +351,56 @@ class TrainingDataPerformance:
             "jump_median_uv": float(np.median(
                 np.max(jump_by_trial_channel, axis=1))),
             "jump_max_uv": float(np.max(jump_by_trial_channel)),
+        }
+
+        # Explicit rejection indicators answer both "which screening step?" and
+        # "which electrode caused that trial to be rejected?". Outlier and
+        # compliance are trial-level rules and therefore have no channel list.
+        step_specs = (
+            ("amplitude", f"centred peak > {self.screening_kw['amp_uv']} µV"),
+            ("flat", f"channel SD < {self.screening_kw['flat_uv']} µV"),
+            ("jump", f"sample jump > {self.screening_kw['jump_uv']} µV"),
+            ("outlier", f"within-class robust z > {self.screening_kw['z_max']}"),
+            ("noncompliant", "cue/trial marked noncompliant"),
+        )
+        self.rejection_steps = []
+        for number, (reason, rule) in enumerate(step_specs, start=1):
+            failed = int(np.asarray(
+                self.screening["reasons"][reason], dtype=bool).sum())
+            self.rejection_steps.append({
+                "step": number, "reason": reason, "rule": rule,
+                "failed_trials": failed,
+                "passed_trials": int(len(self.X) - failed),
+                "indicator": "REJECTS" if failed else "PASS",
+            })
+        self.trial_rejection_indicators = []
+        for trial_index in range(len(self.X)):
+            channel_failures = {}
+            for reason, mask in self.channel_failure_masks.items():
+                failed_channels = [
+                    self.channel_labels[channel]
+                    for channel in np.flatnonzero(mask[trial_index])]
+                if failed_channels:
+                    channel_failures[reason] = failed_channels
+            reasons = list(self.drop_reasons[trial_index])
+            self.trial_rejection_indicators.append({
+                "trial": trial_index + 1,
+                "label": str(self.labels[trial_index]),
+                "indicator": "ACCEPT" if self.keep[trial_index] else "REJECT",
+                "accepted": bool(self.keep[trial_index]),
+                "rejected_by": reasons,
+                "channel_failures": channel_failures,
+            })
+        drop_rate = float((~self.keep).mean()) if len(self.keep) else 1.0
+        recording_accepted = bool(self.keep.any() and drop_rate <= .33)
+        self.recording_decision = {
+            "indicator": "ACCEPT" if recording_accepted else "REJECT",
+            "accepted": recording_accepted,
+            "rule": "at least one retained trial and no more than 33% rejected",
+            "drop_rate": drop_rate,
+            "first_rejecting_step": next(
+                (row["reason"] for row in self.rejection_steps
+                 if row["failed_trials"]), None),
         }
 
         self.model_path = str(model_path) if model_path else None
@@ -402,6 +461,8 @@ class TrainingDataPerformance:
                         predicted == self._physical_label(self.labels[index])),
             "keep": bool(self.keep[index]),
             "reasons": list(self.drop_reasons[index]),
+            "channel_failures": dict(
+                self.trial_rejection_indicators[index]["channel_failures"]),
             "subject": str(self.subjects[index]),
             "session": int(self.sessions[index]),
             "file": str(self.files[int(self.sessions[index])]),
@@ -423,6 +484,9 @@ class TrainingDataPerformance:
                 for name, mask in self.screening["reasons"].items()
             },
             "screening_thresholds": dict(self.screening_kw),
+            "recording_decision": dict(self.recording_decision),
+            "rejection_steps": list(self.rejection_steps),
+            "trial_rejection_indicators": list(self.trial_rejection_indicators),
             "trial_signal_metrics": dict(self.trial_signal_metrics),
             "channel_diagnostics": list(self.channel_diagnostics),
             "class_counts": dict(self.class_counts),
