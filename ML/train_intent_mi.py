@@ -27,11 +27,19 @@ from sklearn.metrics import balanced_accuracy_score, confusion_matrix
 from sklearn.model_selection import GroupKFold
 
 from ML.mi_advanced import make_riemannian, make_riemannian_lr
-from ML.motor_intent import (IDLE, INTENT_LABEL_PREFIX, MotorIntentMap,
-                             assess_intent_set, canonical_intents,
-                             general_recording_dir, intent_profile_dir,
-                             make_intent_label, parse_intent_label,
-                             universal_profile_dir)
+from ML.motor_intent import (
+    IDLE,
+    INTENT_LABEL_PREFIX,
+    assess_intent_set,
+    canonical_intents,
+    category_for_intents,
+    category_profile_dir,
+    general_recording_dir,
+    intent_profile_dir,
+    make_intent_label,
+    parse_intent_label,
+    universal_profile_dir,
+)
 
 INTENT_PIPELINES = {
     "riemann_svm": make_riemannian,
@@ -40,6 +48,24 @@ INTENT_PIPELINES = {
 MIN_TRIALS_PER_CLASS = 8
 MIN_SESSIONS = 3
 DEFAULT_CONFIDENCE_THRESHOLD = 0.55
+DEEP_INTENT_PIPELINES = ("eegconformer", "tcformer")
+ALL_INTENT_PIPELINES = tuple(INTENT_PIPELINES) + DEEP_INTENT_PIPELINES
+
+
+def _make_intent_pipeline(name, fs, *, transformer_epochs=40,
+                          batch_size=32, pretrained_model=None,
+                          random_state=42, verbose=False):
+    if name in INTENT_PIPELINES:
+        if pretrained_model:
+            raise ValueError("public pretrained weights require eegconformer or tcformer")
+        return INTENT_PIPELINES[name](sample_freq=fs)
+    if name not in DEEP_INTENT_PIPELINES:
+        raise ValueError(f"unknown intent pipeline {name!r}")
+    from ML.deep_mi import BraindecodeMIClassifier
+    return BraindecodeMIClassifier(
+        model_name=name, sample_freq=fs, max_epochs=transformer_epochs,
+        batch_size=batch_size, pretrained_path=pretrained_model,
+        random_state=random_state, verbose=verbose)
 
 
 def load_intent_data(user, intents, root=None, data_root=None):
@@ -183,10 +209,42 @@ def session_folds(groups, y, n_splits=3):
 def train_intent_user(user, intents, root=None, data_root=None,
                       sample_freq=None, n_splits=3,
                       confidence_threshold=DEFAULT_CONFIDENCE_THRESHOLD,
-                      screen=True, verbose=True):
+                      screen=True, verbose=True, category_specialist=False,
+                      pipelines=None, transformer_epochs=40, batch_size=32,
+                      pretrained_model=None, random_state=42):
     wanted = canonical_intents(intents)
     assessment = assess_intent_set(wanted)
+    category = category_for_intents(wanted) if category_specialist else None
+    selected_pipelines = tuple(pipelines or INTENT_PIPELINES)
+    unknown = set(selected_pipelines) - set(ALL_INTENT_PIPELINES)
+    if unknown:
+        raise ValueError(f"unknown intent pipelines: {sorted(unknown)}")
+    if pretrained_model and not any(v in DEEP_INTENT_PIPELINES for v in selected_pipelines):
+        raise ValueError("pretrained_model requires an EEGConformer/TCFormer pipeline")
     data = load_intent_data(user, wanted, root=root, data_root=data_root)
+    if pretrained_model:
+        transfer_category = category_for_intents(wanted)
+        public_bundle = joblib.load(pretrained_model)
+        if (not isinstance(public_bundle, dict) or
+                public_bundle.get("kind") != "PublicMICategoryModel"):
+            raise ValueError(f"{pretrained_model} is not a PublicMICategoryModel")
+        if public_bundle.get("category") != transfer_category:
+            raise ValueError(
+                f"public model category {public_bundle.get('category')!r} does not "
+                f"match personal task category {transfer_category!r}")
+        from ML.montage import get as get_montage
+        personal_channels = [str(v).upper() for v in
+                             get_montage(data["montage"]).get("labels", [])]
+        public_channels = [str(v).upper() for v in
+                           public_bundle.get("channel_labels", [])]
+        if public_channels != personal_channels:
+            raise ValueError(
+                "public pretraining channel labels/order do not match personal "
+                f"montage: {public_channels!r} vs {personal_channels!r}")
+        if int(public_bundle.get("sample_freq", -1)) != int(data["fs"]):
+            raise ValueError("public pretraining sample rate does not match personal data")
+        if int(public_bundle.get("n_times", -1)) != int(data["X"].shape[-1]):
+            raise ValueError("public pretraining epoch length does not match personal data")
 
     if screen:
         from ML.quality import screen_trials
@@ -229,18 +287,23 @@ def train_intent_user(user, intents, root=None, data_root=None,
                   "trustworthy session-held-out score")
 
     results = {}
-    for name, factory in INTENT_PIPELINES.items():
+    for pipeline_index, name in enumerate(selected_pipelines):
         scores, predictions, truths = [], [], []
         started = time.perf_counter()
-        for train, test in session_folds(groups, y, n_splits=n_splits) or []:
+        for fold_index, (train, test) in enumerate(
+                session_folds(groups, y, n_splits=n_splits) or []):
             try:
-                model = factory(sample_freq=fs)
+                model = _make_intent_pipeline(
+                    name, fs, transformer_epochs=transformer_epochs,
+                    batch_size=batch_size, pretrained_model=pretrained_model,
+                    random_state=random_state + pipeline_index * 100 + fold_index,
+                    verbose=False)
                 model.fit(X[train], y[train])
                 pred = np.asarray(model.predict(X[test]), dtype=int)
                 scores.append(float(balanced_accuracy_score(y[test], pred)))
                 predictions.extend(pred.tolist())
                 truths.extend(y[test].tolist())
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - report/skip one failed CV pipeline fold
                 if verbose:
                     print(f"  {name} fold skipped: {exc}")
         if scores:
@@ -257,28 +320,38 @@ def train_intent_user(user, intents, root=None, data_root=None,
         best = max(results, key=lambda name: results[name]["mean"])
         score = results[best]["mean"]
     else:
-        best, score, reliable = "riemann_lr", None, False
+        best, score, reliable = selected_pipelines[0], None, False
 
-    model = INTENT_PIPELINES[best](sample_freq=fs)
+    model = _make_intent_pipeline(
+        best, fs, transformer_epochs=transformer_epochs,
+        batch_size=batch_size, pretrained_model=pretrained_model,
+        random_state=random_state, verbose=verbose and best in DEEP_INTENT_PIPELINES)
     model.fit(X, y)
 
-    directory = data["directory"]
+    directory = (category_profile_dir(user, category, root=root)
+                 if category_specialist else data["directory"])
     directory.mkdir(parents=True, exist_ok=True)
     model_path = directory / "intent_model.joblib"
     trained_at = datetime.now().isoformat(timespec="seconds")
     bundle = {
-        "kind": "MotorIntentModel", "version": 1,
+        "kind": "MotorIntentModel", "version": 2,
         "pipeline": best, "model": model, "intents": list(wanted),
+        "model_scope": ("personal-category" if category_specialist
+                        else "exact-task-set"),
+        "category": category,
+        "pretrained_from": str(pretrained_model) if pretrained_model else None,
         "class_map": data["class_map"], "has_idle": data["has_idle"],
         "sample_freq": fs, "montage": data["montage"],
         "confidence_threshold": float(confidence_threshold),
-        "n_trials": int(len(X)), "n_sessions": int(sessions),
+        "n_trials": len(X), "n_sessions": int(sessions),
         "cv_accuracy": score,
         "cv_reliable": bool(reliable and score is not None),
         "chance_accuracy": chance, "all_scores": results,
         "assessment": assessment, "trained_at": trained_at,
         "recordings": data["files"],
     }
+    if hasattr(model, "transfer_summary"):
+        bundle["transfer_report"] = model.transfer_summary()
     joblib.dump(bundle, model_path)
     info = {k: v for k, v in bundle.items() if k != "model"}
     (directory / "intent_model_info.json").write_text(json.dumps(info, indent=2))
@@ -306,8 +379,9 @@ def train_intent_user(user, intents, root=None, data_root=None,
 
     return {
         "user": str(user), "intents": wanted, "task_set": assessment["task_set"],
+        "model_scope": bundle["model_scope"], "category": category,
         "pipeline": best, "accuracy": score, "chance": chance,
-        "n_trials": int(len(X)), "n_sessions": int(sessions),
+        "n_trials": len(X), "n_sessions": int(sessions),
         "reliable": bundle["cv_reliable"], "path": str(model_path),
         "all_scores": results,
     }
@@ -327,13 +401,26 @@ def main():
     ap.add_argument("--splits", type=int, default=3)
     ap.add_argument("--threshold", type=float,
                     default=DEFAULT_CONFIDENCE_THRESHOLD)
+    ap.add_argument("--category-specialist", action="store_true",
+                    help="save under the user's matching category fallback")
+    ap.add_argument("--pipelines", default="riemann_svm,riemann_lr",
+                    help="comma-separated: riemann_svm, riemann_lr, eegconformer, tcformer")
+    ap.add_argument("--transformer-epochs", type=int, default=40)
+    ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument("--pretrained", default=None,
+                    help="PublicMICategoryModel used only to initialize a deep model before personal fine-tuning")
+    ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--no-screen", action="store_true")
     args = ap.parse_args()
     intents = [part.strip() for part in args.intents.split(",") if part.strip()]
+    pipelines = tuple(v.strip() for v in args.pipelines.split(",") if v.strip())
     result = train_intent_user(
         args.user, intents, root=args.root, data_root=args.data_root,
         n_splits=args.splits, confidence_threshold=args.threshold,
-        screen=not args.no_screen)
+        screen=not args.no_screen, category_specialist=args.category_specialist,
+        pipelines=pipelines, transformer_epochs=args.transformer_epochs,
+        batch_size=args.batch_size, pretrained_model=args.pretrained,
+        random_state=args.seed)
     return 0 if result else 1
 
 

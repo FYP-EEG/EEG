@@ -29,11 +29,19 @@ dependencies = [
 ui = ["pygame-ce>=2.5"]
 hardware = ["brainflow>=5.10"]
 research = ["mne>=1.5", "matplotlib>=3.7", "seaborn>=0.12", "pandas>=2.0"]
-all = ["pygame-ce>=2.5", "brainflow>=5.10"]
+public-mi = ["mne>=1.5", "moabb>=1.2", "pandas>=2.0"]
+transformer = ["torch>=2.1", "braindecode>=2.0"]
+all = [
+  "pygame-ce>=2.5", "brainflow>=5.10", "mne>=1.5",
+  "moabb>=1.2", "pandas>=2.0", "torch>=2.1", "braindecode>=2.0",
+]
 
 [project.scripts]
 bci-speller = "example.bci_speller:main"
 bci-calibrate = "EEG.calibration_record:main"
+bci-public-mi = "ML.public_mi:main"
+bci-train-public-mi = "ML.train_public_mi:main"
+bci-train-intent-mi = "ML.train_intent_mi:main"
 
 [tool.setuptools]
 packages = ["bci_sdk", "ML"]

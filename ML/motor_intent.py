@@ -44,19 +44,49 @@ class MotorIntent:
     LEFT_FOOT = "left_foot"
     RIGHT_FOOT = "right_foot"
     BOTH_FEET = "both_feet"
+
+    LEFT_ARM = "left_arm"
+    RIGHT_ARM = "right_arm"
+    RIGHT_ELBOW_FLEXION = "right_elbow_flexion"
+    RIGHT_ELBOW_EXTENSION = "right_elbow_extension"
+    RIGHT_FOREARM_SUPINATION = "right_forearm_supination"
+    RIGHT_FOREARM_PRONATION = "right_forearm_pronation"
+    RIGHT_HAND_OPEN = "right_hand_open"
+    RIGHT_HAND_CLOSE = "right_hand_close"
     IDLE = IDLE
 
 
 FINGER_NAMES = ("thumb", "index", "middle", "ring", "pinky")
 FINGER_INTENTS = tuple(
     f"{side}_{finger}" for side in ("left", "right") for finger in FINGER_NAMES)
-BODY_INTENTS = ("left_hand", "right_hand", "both_hands",
-                "left_foot", "right_foot", "both_feet")
+HAND_INTENTS = ("left_hand", "right_hand", "both_hands")
+FEET_INTENTS = ("left_foot", "right_foot", "both_feet")
+UPPER_LIMB_INTENTS = (
+    "left_arm", "right_arm", "right_elbow_flexion", "right_elbow_extension",
+    "right_forearm_supination", "right_forearm_pronation",
+    "right_hand_open", "right_hand_close",
+)
+BODY_INTENTS = HAND_INTENTS + FEET_INTENTS
 # Reusable all-body recording requested for the shared data pool: ten fingers,
 # gross left/right hand imagery, and bilateral feet/jump imagery.
 UNIVERSAL_INTENTS = FINGER_INTENTS + ("left_hand", "right_hand", "both_feet")
-VALID_INTENTS = FINGER_INTENTS + BODY_INTENTS + (IDLE,)
+VALID_INTENTS = FINGER_INTENTS + BODY_INTENTS + UPPER_LIMB_INTENTS + (IDLE,)
 _CANONICAL_ORDER = {name: i for i, name in enumerate(VALID_INTENTS)}
+
+# Edited by Anson
+# Date: 10/11/2026
+# Purpose: route games and models by a single neuroanatomical task category.
+CATEGORY_FINGER = "finger"
+CATEGORY_HAND = "hand"
+CATEGORY_UPPER_LIMB = "upper_limb"
+CATEGORY_FEET = "feet"
+MI_CATEGORIES = (CATEGORY_FINGER, CATEGORY_HAND, CATEGORY_UPPER_LIMB, CATEGORY_FEET)
+_CATEGORY_INTENTS = {
+    CATEGORY_FINGER: frozenset(FINGER_INTENTS),
+    CATEGORY_HAND: frozenset(HAND_INTENTS),
+    CATEGORY_UPPER_LIMB: frozenset(UPPER_LIMB_INTENTS),
+    CATEGORY_FEET: frozenset(FEET_INTENTS),
+}
 
 _ALIASES = {
     "left_little": "left_pinky", "right_little": "right_pinky",
@@ -66,6 +96,8 @@ _ALIASES = {
     "left_ring_finger": "left_ring", "right_ring_finger": "right_ring",
     "left_thumb_finger": "left_thumb", "right_thumb_finger": "right_thumb",
     "feet": "both_feet", "both_foot": "both_feet", "rest": IDLE,
+    "right_supination": "right_forearm_supination",
+    "right_pronation": "right_forearm_pronation",
 }
 
 
@@ -100,6 +132,50 @@ def canonical_intents(intents, allow_idle=False):
     if not clean:
         raise ValueError("at least one motor intention is required")
     return tuple(sorted(clean, key=lambda v: _CANONICAL_ORDER[v]))
+
+
+def normalize_category(value):
+    """Normalize one public/runtime MI category name."""
+    name = re.sub(r"[\s-]+", "_", str(value).strip().lower())
+    aliases = {"fingers": CATEGORY_FINGER, "hands": CATEGORY_HAND,
+               "arm": CATEGORY_UPPER_LIMB, "arms": CATEGORY_UPPER_LIMB,
+               "upperlimb": CATEGORY_UPPER_LIMB,
+               "foot": CATEGORY_FEET, "feet": CATEGORY_FEET}
+    name = aliases.get(name, name)
+    if name not in MI_CATEGORIES:
+        raise ValueError(f"unknown MI category {value!r}; expected one of {MI_CATEGORIES}")
+    return name
+
+
+def intent_category(intent):
+    """Return the one specialist category for a runtime motor intention."""
+    name = normalize_intent(intent, allow_idle=True)
+    if name == IDLE:
+        return None
+    for category, members in _CATEGORY_INTENTS.items():
+        if name in members:
+            return category
+    raise ValueError(f"no category registered for motor intent {name!r}")
+
+
+def category_for_intents(intents, require_single=True):
+    """Return one category, or a category tuple for an explicitly mixed set."""
+    values = canonical_intents(intents)
+    categories = tuple(category for category in MI_CATEGORIES
+                       if any(intent_category(value) == category for value in values))
+    if require_single and len(categories) != 1:
+        category_map = {value: intent_category(value) for value in values}
+        raise ValueError(
+            "a category-specialist model cannot mix task categories: "
+            f"{category_map}")
+    return categories[0] if require_single else categories
+
+
+def split_intents_by_category(intents):
+    values = canonical_intents(intents)
+    return {category: tuple(v for v in values if intent_category(v) == category)
+            for category in MI_CATEGORIES
+            if any(intent_category(v) == category for v in values)}
 
 
 def make_intent_label(intent):
@@ -160,6 +236,34 @@ def task_set_key(intents):
 def intent_profile_dir(user, intents, root=None):
     base = Path(root) if root is not None else PROFILES
     return base / _slug(user) / "motor_intent" / task_set_key(intents)
+
+
+def category_profile_dir(user, category, root=None):
+    """Personal category specialist, separate from exact game task sets."""
+    base = Path(root) if root is not None else PROFILES
+    return (base / _slug(user) / "motor_intent" / "_categories" /
+            normalize_category(category))
+
+
+def public_category_model_dir(category, root=None):
+    """Benchmark/pretraining models; never treated as personal calibration."""
+    base = Path(root) if root is not None else ROOT / "models" / "public"
+    return base / normalize_category(category)
+
+
+def model_candidates(user, intents, root=None, public_root=None):
+    """Ordered model locations without silently choosing a universal model."""
+    values = canonical_intents(intents)
+    rows = [("exact-task-set", intent_profile_dir(user, values, root=root) /
+             "intent_model.joblib")]
+    categories = category_for_intents(values, require_single=False)
+    if len(categories) == 1:
+        category = categories[0]
+        rows.append(("personal-category", category_profile_dir(
+            user, category, root=root) / "intent_model.joblib"))
+        rows.append(("public-pretraining-only", public_category_model_dir(
+            category, root=public_root) / "category_model.joblib"))
+    return rows
 
 
 def universal_profile_dir(user, root=None):
@@ -264,6 +368,9 @@ def intent_instruction(intent, action=None):
     if name.endswith("_foot"):
         side = name.split("_", 1)[0].upper()
         return f"Kinesthetically imagine moving your {side} FOOT{target}. Do not move."
+    if name in UPPER_LIMB_INTENTS:
+        movement = name.replace("_", " ").upper()
+        return f"Kinesthetically imagine {movement}{target}. Do not move."
     return f"Imagine {name.replace('_', ' ')}{target}. Do not move."
 
 
@@ -302,23 +409,53 @@ class MotorIntentModel:
     """Serve a reusable, locally trained motor-intent task-set model."""
 
     def __init__(self, model, class_map, intents, sample_freq=250, montage=None,
-                 confidence_threshold=0.55, user=None, meta=None):
+                 confidence_threshold=0.55, user=None, meta=None,
+                 trained_intents=None, model_scope="exact-task-set"):
         self.model = model
         self.class_map = {int(k): str(v) for k, v in dict(class_map).items()}
         self.intents = canonical_intents(intents)
+        self.trained_intents = canonical_intents(trained_intents or intents)
+        if not set(self.intents).issubset(self.trained_intents):
+            raise ValueError("active game intents must be a subset of trained intents")
         self.sample_freq = int(sample_freq)
         self.montage = montage
         self.confidence_threshold = float(confidence_threshold)
         self.user = user
+        self.model_scope = str(model_scope)
         self.meta = dict(meta or {})
 
     @classmethod
-    def load(cls, user, intents, root=None, confidence_threshold=None):
+    def _load_path(cls, path, user, active_intents, confidence_threshold=None,
+                   model_scope="exact-task-set", require_exact=False):
         import joblib
 
+        path = Path(path)
+        bundle = joblib.load(path)
+        if not isinstance(bundle, dict) or bundle.get("kind") != "MotorIntentModel":
+            raise ValueError(f"{path} is not a reusable motor-intent model")
+        stored = canonical_intents(bundle.get("intents", ()))
+        active = canonical_intents(active_intents)
+        if require_exact and stored != active:
+            raise ValueError(f"model task set {stored!r} does not match {active!r}")
+        if not require_exact and not set(active).issubset(stored):
+            raise ValueError(
+                f"{model_scope} model covers {stored!r}, not requested {active!r}")
+        threshold = (bundle.get("confidence_threshold", 0.55)
+                     if confidence_threshold is None else confidence_threshold)
+        meta = {k: v for k, v in bundle.items() if k != "model"}
+        meta["loaded_from"] = str(path)
+        meta["model_scope"] = model_scope
+        return cls(bundle["model"], bundle["class_map"], active,
+                   sample_freq=bundle.get("sample_freq", 250),
+                   montage=bundle.get("montage"),
+                   confidence_threshold=threshold, user=str(user), meta=meta,
+                   trained_intents=stored, model_scope=model_scope)
+
+    @classmethod
+    def load(cls, user, intents, root=None, confidence_threshold=None):
+        """Load only an exact task-set model (backward-compatible API)."""
         values = canonical_intents(intents)
-        directory = intent_profile_dir(user, values, root=root)
-        path = directory / "intent_model.joblib"
+        path = intent_profile_dir(user, values, root=root) / "intent_model.joblib"
         if not path.exists():
             joined = ",".join(values)
             raise FileNotFoundError(
@@ -327,19 +464,42 @@ class MotorIntentModel:
                 f"record with `python EEG/data_record.py --file <app> "
                 f"--intent-mi --subject {user} ...`, then train with "
                 f"`python ML/train_intent_mi.py {user} --intents {joined}`")
-        bundle = joblib.load(path)
-        if not isinstance(bundle, dict) or bundle.get("kind") != "MotorIntentModel":
-            raise ValueError(f"{path} is not a reusable motor-intent model")
-        stored = canonical_intents(bundle.get("intents", ()))
-        if stored != values:
-            raise ValueError(f"model task set {stored!r} does not match {values!r}")
-        threshold = (bundle.get("confidence_threshold", 0.55)
-                     if confidence_threshold is None else confidence_threshold)
-        return cls(bundle["model"], bundle["class_map"], stored,
-                   sample_freq=bundle.get("sample_freq", 250),
-                   montage=bundle.get("montage"),
-                   confidence_threshold=threshold, user=str(user),
-                   meta={k: v for k, v in bundle.items() if k != "model"})
+        return cls._load_path(path, user, values, confidence_threshold,
+                              model_scope="exact-task-set", require_exact=True)
+
+    @classmethod
+    def load_resolved(cls, user, intents, root=None, confidence_threshold=None,
+                      public_root=None):
+        """Resolve exact task set first, then a matching personal category.
+
+        A public category model is deliberately not served directly: it is a
+        benchmark/pretraining artefact without this user's calibrated head.
+        The error names it when available and gives the transfer-training path.
+        """
+        values = canonical_intents(intents)
+        candidates = model_candidates(user, values, root=root,
+                                      public_root=public_root)
+        for scope, path in candidates:
+            if scope == "public-pretraining-only":
+                continue
+            if not path.exists():
+                continue
+            return cls._load_path(
+                path, user, values, confidence_threshold,
+                model_scope=scope, require_exact=(scope == "exact-task-set"))
+        public = next((path for scope, path in candidates
+                       if scope == "public-pretraining-only" and path.exists()), None)
+        joined = ",".join(values)
+        extra = (f"\nA public pretraining model exists at {public}, but it cannot "
+                 "replace personal calibration. Fine-tune/train a personal "
+                 "category head with ML/train_intent_mi.py."
+                 if public else "")
+        searched = "\n".join(f"  {scope}: {path}" for scope, path in candidates
+                              if scope != "public-pretraining-only")
+        raise FileNotFoundError(
+            f"no compatible personal motor-intent model for user={user!r}, "
+            f"intents={values!r}. Searched:\n{searched}{extra}\n"
+            f"Train with `python ML/train_intent_mi.py {user} --intents {joined}`.")
 
     def _prepare(self, window):
         x = np.asarray(window, dtype=np.float64)
@@ -367,7 +527,10 @@ class MotorIntentModel:
         intent = self.class_map.get(label)
         if intent is None:
             raise ValueError(f"model predicted unknown motor-intent class {label}")
-        if intent == IDLE:
+        if intent == IDLE or intent not in self.intents:
+            # A category specialist can contain more same-category classes than
+            # this game maps. Suppress them rather than leaking an unrelated
+            # command into the game's selector.
             return None, confidence
         return intent, confidence
 
@@ -375,6 +538,12 @@ class MotorIntentModel:
         return {
             "kind": "MotorIntentModel", "user": self.user,
             "pipeline": self.meta.get("pipeline"), "intents": list(self.intents),
+            "trained_intents": list(self.trained_intents),
+            "model_scope": self.model_scope,
+            "category": (category_for_intents(self.trained_intents)
+                         if len(category_for_intents(
+                             self.trained_intents, require_single=False)) == 1
+                         else None),
             "classes": [self.class_map[k] for k in sorted(self.class_map)],
             "task_set": task_set_key(self.intents),
             "cv_accuracy": self.meta.get("cv_accuracy"),
