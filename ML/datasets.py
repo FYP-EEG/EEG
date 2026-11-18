@@ -16,17 +16,20 @@ Every classifier in this project expects **(trials, channels, samples)** at 250 
 Without a common loader each notebook re-implements the reshaping, which is exactly
 how the 64-channel indices ended up hard-coded into an 8-channel pipeline.
 
-These functions are also what let you TRAIN ON PUBLIC DATA AND FINE-TUNE ON YOUR OWN:
-both sources come back in the same format, so they can be concatenated.
+A shared array shape is necessary but NOT sufficient for scientifically valid
+mixing. Public and personal EEG can differ in montage order, reference, units,
+sample rate, paradigm and subject domain. Public motor-imagery data therefore
+uses the metadata-rich archives in ``ML.public_mi`` and public-to-personal model
+initialization; it is never blindly concatenated with Cyton calibration.
 
     from ML.datasets import load_benchmark_mat, load_calibration_npz, resample_to
 
     Xp, yp, meta = load_benchmark_mat("S1.mat", freq_map={10: 0, 20: 1})
     Xo, yo, _    = load_calibration_npz("dataset/calib_S01_*.npz")
 
-Note on channels: public 64-channel data must be reduced to the 8 electrodes you
-actually own before it can be mixed with your recordings. `pick_channels()` does
-that explicitly rather than silently.
+Note on channels: public dense-cap data must be reduced to explicit matching
+electrode names/order before any compatible analysis. Equal channel count alone
+does not establish montage equivalence.
 """
 
 import glob
@@ -208,8 +211,16 @@ def load_physionet_edf(paths, target_channels=None, fs_out=250.0, window=750,
                                           'C4', 'CP3', 'CP4', 'PZ']
 
     Xs, ys, subs = [], [], []
+    from ML.public_mi import physionet_imagery_label_map
     for si, fp in enumerate(paths):
         try:
+            # T1/T2 are context-dependent in EEGMMIDB. This legacy binary
+            # loader accepts only imagery runs 04/08/12 where they truly mean
+            # left/right fist; bilateral feet runs need the standardized public
+            # importer in ML.public_mi.
+            source_map = physionet_imagery_label_map(fp)
+            if source_map != {"T1": "left_hand", "T2": "right_hand"}:
+                continue
             raw = mne.io.read_raw_edf(fp, preload=True, verbose=False)
             if raw.info["sfreq"] != fs_out:
                 raw.resample(fs_out, verbose=False)
@@ -281,11 +292,12 @@ def load_calibration_npz(path, include=("target_0", "target_1")):
 
 
 def combine(*datasets, montage_name="cyton8_ssvep"):
-    """Concatenate datasets that have been reduced to the same channel count.
+    """Concatenate already compatible arrays after caller-side semantic checks.
 
-    Use to pre-train on public data and fine-tune on your own. Raises rather than
-    broadcasting if the shapes disagree -- silent mismatches here are how a model
-    ends up trained on the wrong electrodes.
+    This legacy shape helper does not verify channel names, units, reference,
+    paradigm or subject domain. Do not use it to merge public MI with personal
+    Cyton recordings; use ``ML.public_mi`` archives and transfer fine-tuning.
+    It raises on shape mismatch rather than silently broadcasting.
     """
     Xs, ys, srcs = [], [], []
     ref = None

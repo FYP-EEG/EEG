@@ -36,7 +36,13 @@ dataset/motor_intent/calib_<subject>_<timestamp>.npz
 
 Each generalized NPZ still contains subject, session, montage, sampling-rate and label metadata so grouped evaluation remains possible.
 
-Changing action names without changing the motor-intent set does not require retraining. Adding/removing a motor intention creates a different task set and requires calibration.
+Changing action names without changing the motor-intent set does not require retraining. Adding/removing an intention creates a different exact task set. Runtime first seeks that exact personal model, then a compatible personal `finger`, `hand`, `upper_limb`, or `feet` specialist at:
+
+```text
+profiles/<user>/motor_intent/_categories/<category>/intent_model.joblib
+```
+
+The specialist must cover every intention requested by the game. A public benchmark is never loaded directly as personal calibration, and a mixed/all-body model is not used as a silent fallback. Dataset imports and optional EEGConformer/TCFormer pretraining are documented in `PUBLIC_MI_DATASETS.md`.
 
 ## Universal reusable body-intent recording
 

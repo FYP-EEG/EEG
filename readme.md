@@ -191,6 +191,13 @@ map, records a Cyton block and trains locally. A separate universal `data_record
 application models reuse only the required labels. Dry-run rehearses the UI without
 contaminating the real profile. See `docs/MOTOR_INTENT_SDK.md` for the complete workflow.
 
+Public finger, hand, upper-limb and feet datasets now use separate standardized
+category archives. Live loading resolves an exact personal task-set model first and a
+compatible personal category specialist second; it never serves a public benchmark as
+personal calibration or silently falls back to one all-body classifier. See
+`docs/PUBLIC_MI_DATASETS.md` for licenses, true source-label mappings, import commands,
+subject-held-out evaluation, and optional EEGConformer/TCFormer fine-tuning.
+
 ### `BCISession` — the acquisition + decoding pipeline
 
 ```python

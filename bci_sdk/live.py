@@ -255,7 +255,8 @@ class LiveBCI:
                  serial_port=None, recording=None, sample_freq=250,
                  window=750, hop=250, on_select=None, on_change=None,
                  freq_map=None, probe_channels=(1, 2), verbose=True,
-                 app=None, model_root=None, intent_map=None, **decider_kw):
+                 app=None, model_root=None, intent_map=None,
+                 public_model_root=None, **decider_kw):
         self.verbose = verbose
         self.source = source
         self.sample_freq = sample_freq
@@ -281,8 +282,9 @@ class LiveBCI:
                     "source='intent-mi' requires user= and intent_map=")
             self.intent_map = (intent_map if isinstance(intent_map, MotorIntentMap)
                                else MotorIntentMap(intent_map))
-            self.model = MotorIntentModel.load(
-                user, self.intent_map.intents, root=model_root)
+            self.model = MotorIntentModel.load_resolved(
+                user, self.intent_map.intents, root=model_root,
+                public_root=public_model_root)
             artifact_uv = 100.0
         else:
             from ML.local_model import LocalMIModel
