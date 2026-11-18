@@ -23,6 +23,11 @@ Date: 19/10/2026
 Purpose: add reusable --intent-mi labels, task-set profiles, developer action
          mappings, optional idle trials and generic non-button action targets.
 
+Edited by Anson
+Date: 18/11/2026
+Purpose: run the mandatory all-channel Cyton startup gate before any real MI
+         recording and print explicit post-save NPZ rejection indicators.
+
 MODES
 -----
 1. Character mode (original, unchanged) - flashes typed/random characters:
@@ -837,6 +842,46 @@ def _recording_report_root(args):
     return base / str(args.subject or "unknown").lower()
 
 
+def _run_required_headband_startup(args):
+    """Run the strict standalone startup gate before creating the recording UI."""
+    if getattr(args, "dry_run", False):
+        return True
+    if int(getattr(args, "board_id", 0)) != 0:
+        print("\nSTARTUP NOTE: the full Normal-input reset and internal-signal "
+              "gate requires direct Cyton board ID 0. This non-direct backend "
+              "will still undergo the mandatory live raw preflight.")
+        return True
+    port = getattr(args, "serial_port", None)
+    if not port:
+        print("Direct Cyton mode needs --serial-port COM8 (replace COM8 with "
+              "the dongle port that appears in Windows).")
+        return False
+    confirmed = bool(getattr(args, "confirm_srb_bias", False))
+    if not confirmed:
+        print("\nPHYSICAL CHECK (software cannot inspect these connectors)")
+        print("  1. SRB/reference electrode is firmly attached.")
+        print("  2. BIAS electrode is firmly attached.")
+        print("  3. All eight electrode leads are connected to the intended nodes.")
+        try:
+            confirmed = (input("Type YES to confirm these three checks: ")
+                         .strip().upper() == "YES")
+        except EOFError:
+            confirmed = False
+    from startup.check_headband import run_headband_check
+    stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_base = (ROOT / "reports" / "startup" /
+                str(getattr(args, "subject", None) or "unknown").lower() /
+                f"pre_record_{stamp}")
+    result = run_headband_check(
+        port, montage=args.montage, seconds=args.preflight_seconds,
+        physical_confirmed=confirmed, out_base=out_base)
+    if not result["passed"]:
+        print("\nRECORDING BLOCKED BY STARTUP GATE. Fix the first failed "
+              "startup stage; --force-record does not bypass hardware safety.")
+        return False
+    return True
+
+
 def _start_real_capture_with_preflight(backend, args):
     """Open hardware, verify live raw EEG, report, then start capture thread."""
     from EEG.signal_preflight import (analyse_preflight, collect_preflight,
@@ -888,9 +933,19 @@ def _generate_saved_recording_report(npz_path, args):
         screening_kw = {"amp_uv": 400.0, "jump_uv": 75.0,
                         "flat_uv": .05, "z_max": 4.0}
         inspected = inspect_file(Path(npz_path), screening_kw)
+        _, quality_report, assessment, _ = inspected
         output = _recording_report_root(args) / (Path(npz_path).stem + ".html")
         html_path, json_path = build_html(
             [(Path(npz_path), *inspected)], output)
+        decision = quality_report["recording_decision"]
+        print(f"  NPZ SCREENING INDICATOR -> {decision['indicator']}")
+        for step in quality_report["rejection_steps"]:
+            print(f"    step {step['step']} {step['reason']:<13} "
+                  f"{step['indicator']:<7} failed_trials={step['failed_trials']}")
+        if not decision["accepted"]:
+            print(f"    first rejecting step -> "
+                  f"{decision['first_rejecting_step'] or 'none'}")
+            print(f"    readiness verdict -> {assessment['verdict']}")
         print(f"  recording quality HTML -> {html_path}")
         print(f"  recording quality JSON -> {json_path}")
         return html_path, json_path
@@ -909,6 +964,16 @@ def run_example(args):
     if not script.exists():
         print(f"No such script: {script}")
         print(f"Available: {', '.join(sorted(p.stem for p in EXAMPLE_DIR.glob('*.py') if p.stem != '__init__'))}")
+        return 1
+
+    capture_mode = args.mi or args.button_mi or args.intent_mi
+    if capture_mode and not args.subject:
+        print("--mi/--button-mi/--intent-mi needs --subject")
+        return 1
+    # Mandatory direct-Cyton gate runs before loading/prewarming the app, opening
+    # pygame, or starting a timed cue. A failed known-signal/normal-input stage
+    # stops the recording rather than producing another unusable NPZ.
+    if capture_mode and not args.dry_run and not _run_required_headband_startup(args):
         return 1
 
     script_source = script.read_text()
@@ -1517,7 +1582,10 @@ def cli():
                          "an OpenBCI GUI/BrainFlow producer · -1 synthetic")
     ap.add_argument("--serial-port", default=None, help="e.g. COM4")
     ap.add_argument("--preflight-seconds", type=float, default=6.0,
-                    help="still baseline checked before any real recording")
+                    help="seconds per startup/normal-input baseline check")
+    ap.add_argument("--confirm-srb-bias", action="store_true",
+                    help="confirm SRB/reference, BIAS and all 8 leads are attached; "
+                         "otherwise the recorder prompts before hardware startup")
     ap.add_argument("--force-record", action="store_true",
                     help="continue after failed signal-quality preflight; for "
                          "deliberate debugging only")
