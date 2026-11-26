@@ -30,34 +30,27 @@ CYTON_8_SSVEP = {
     "motor": [2, 3],             # C3, C4
 }
 
-# THE MOTOR-IMAGERY MONTAGE  (chosen 6/10/2026)
+# THE CURRENT MOTOR-IMAGERY MONTAGE  (physical order confirmed 16/8/2026)
 #
-# This is now the montage for live MI recording, not just offline PhysioNet
-# work. It matches the Colab starter model exactly - the notebook picks
-# ['FC3','FC4','C3','CZ','C4','CP3','CP4','PZ'] - so a model trained there can
-# be loaded here with no channel remapping.
+# Cyton CH1..CH8 must be wired in exactly this order:
+#     F3, C3, Cz, P3, Pz, F4, C4, P4
+# The ThinkPulse earlobe reference connects to SRB2. Physical BIAS remains
+# disconnected and software BIAS generation is disabled by the ThinkPulse
+# channel profile.
 #
-# ONE KNOWN COST. `artifact` points at FC3/FC4, which are frontocentral MOTOR
-# sites, not forehead. Two consequences, both to check at Layer 1 before
-# trusting a session:
-#   1. Blinks are SMALLER here than at Fp1/Fp2. A blink measured 221.6 uV at
-#      the forehead; at FC3/FC4 it is attenuated, so the 100 uV threshold in
-#      ArtifactDetector may miss some. If Layer 1 shows deliberate blinks going
-#      undetected, lower threshold_uv rather than assuming the channel is clean.
-#   2. These channels also carry the motor signal, so a lowered threshold can
-#      reject genuine imagery as artifact. The two failure modes pull in
-#      opposite directions; pick the threshold from recorded blinks, not a
-#      default.
+# F3/F4 are the best available artifact-monitor pair in this layout, but they
+# are not forehead sites. Blink sensitivity must be measured rather than
+# assumed, and all motor models must be retrained after this montage change.
 CYTON_8_MOTOR = {
     "name": "cyton8_motor",
     "n_channels": 8,
-    "labels": ["FC3", "FC4", "C3", "CZ", "C4", "CP3", "CP4", "PZ"],
-    "ssvep": [7],                # PZ -- poor for SSVEP, this is not an SSVEP montage
-    "artifact": [0, 1],          # FC3, FC4 -- see the warning above
+    "labels": ["F3", "C3", "CZ", "P3", "PZ", "F4", "C4", "P4"],
+    "ssvep": [4],                # PZ -- this remains a motor-oriented montage
+    "artifact": [0, 5],          # F3, F4 -- frontal, but not Fp1/Fp2
     "motor": [0, 1, 2, 3, 4, 5, 6, 7],
-    "motor_lateral": [2, 4],     # C3, C4 -- the pair that carries ERD, and the
-                                 # contrast the Layer 2 go/no-go gate measures
+    "motor_lateral": [1, 6],     # C3, C4
 }
+
 
 # --- Alternative MI montage, kept for older recordings ------------------------
 # Added 21/9/2026, superseded by CYTON_8_MOTOR on 6/10/2026. Still registered so

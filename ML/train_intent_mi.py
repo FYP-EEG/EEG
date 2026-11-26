@@ -38,7 +38,7 @@ from ML.motor_intent import (
     intent_profile_dir,
     make_intent_label,
     parse_intent_label,
-    universal_profile_dir,
+    UNIVERSAL_CATEGORY_INTENTS,
 )
 
 INTENT_PIPELINES = {
@@ -80,13 +80,8 @@ def load_intent_data(user, intents, root=None, data_root=None):
     general_dir = general_recording_dir(data_root)
     general_files = sorted(glob.glob(str(general_dir / "calib_*.npz")))
 
-    # Backward compatibility for recordings made before the generalized pool.
-    universal_dir = universal_profile_dir(user, root=root)
-    universal_files = sorted(glob.glob(str(universal_dir / "calib_*.npz")))
-
     files = [(path, "profile") for path in exact_files]
     files += [(path, "general") for path in general_files]
-    files += [(path, "legacy-universal") for path in universal_files]
     # Avoid double-reading if a caller deliberately points roots together.
     deduplicated = []
     seen_paths = set()
@@ -98,15 +93,20 @@ def load_intent_data(user, intents, root=None, data_root=None):
     files = deduplicated
     if not files:
         raise FileNotFoundError(
-            f"No personal calibration recordings in {directory}, no generalized "
-            f"training recordings in {general_dir}, and no legacy recordings "
-            f"in {universal_dir}.")
+            f"No personal calibration recordings in {directory} and no "
+            f"universal/general recordings in {general_dir}.")
 
     wanted_labels = {make_intent_label(v) for v in wanted}
     sessions, all_labels = [], set()
     fs_values, montages = set(), set()
     for path, source in files:
         with np.load(path, allow_pickle=True) as data:
+            if source == "general":
+                recorded_subject = (
+                    str(np.asarray(data["subject"]).item())
+                    if "subject" in data.files else "")
+                if recorded_subject.strip().casefold() != str(user).strip().casefold():
+                    continue
             X = data["X"].astype(np.float64)
             labels = data["labels"].astype(str)
             mask = np.array([v.startswith(INTENT_LABEL_PREFIX) for v in labels])
@@ -114,7 +114,7 @@ def load_intent_data(user, intents, root=None, data_root=None):
                 continue
             X, labels = X[mask], labels[mask]
             decoded = [parse_intent_label(v) for v in labels]
-            if source in ("general", "legacy-universal"):
+            if source == "general":
                 keep = np.array([v in set(wanted) or v == IDLE for v in decoded])
                 X, labels = X[keep], labels[keep]
                 decoded = [v for v, use in zip(decoded, keep) if use]
@@ -385,6 +385,24 @@ def train_intent_user(user, intents, root=None, data_root=None,
         "reliable": bundle["cv_reliable"], "path": str(model_path),
         "all_scores": results,
     }
+
+
+def train_universal_category_models(user, root=None, data_root=None,
+                                    screen=True, verbose=True, **kwargs):
+    """Split universal recordings into finger, hand and feet classifiers."""
+    results = {}
+    for category, intents in UNIVERSAL_CATEGORY_INTENTS.items():
+        if verbose:
+            print(f"\n=== Training {category} category model ===")
+        results[category] = train_intent_user(
+            user, intents, root=root, data_root=data_root,
+            screen=screen, verbose=verbose, category_specialist=True,
+            **kwargs)
+        if results[category] is None:
+            raise RuntimeError(
+                f"universal recording did not contain enough usable {category} "
+                "trials to train")
+    return results
 
 
 def main():

@@ -58,6 +58,7 @@ NO_ACTION = -1
 
 
 from bci_sdk.live import SineProbe, SineProbeModel  # noqa: E402
+from EEG.cyton_commands import send_cyton_command  # noqa: E402
 
 
 #: serial command -> (description, expected fundamental Hz, expected uVrms)
@@ -120,7 +121,8 @@ def classify_waveform(window, sample_freq=250, channel=None, band=(0.5, 45.0)):
 PASS, FAIL, WARN = "[PASS]", "[FAIL]", "[WARN]"
 
 
-def capture(board_name, serial_port, signal, seconds, window):
+def capture(board_name, serial_port, signal, seconds, window,
+            channel_commands=None):
     """Stream from BrainFlow and return (data, fs, eeg_rows)."""
     from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
 
@@ -140,10 +142,13 @@ def capture(board_name, serial_port, signal, seconds, window):
     board.prepare_session()
     streaming = False
     try:
+        if board_name.startswith("cyton"):
+            for command in channel_commands or ():
+                send_cyton_command(board, command)
         if signal and board_name.startswith("cyton"):
             desc = CYTON_TEST_SIGNALS.get(signal, ("unknown", None, None))[0]
             print(f"  configuring board: {signal!r} -> {desc}")
-            board.config_board(signal)
+            send_cyton_command(board, signal)
             time.sleep(0.5)
 
         board.start_stream()
@@ -165,7 +170,7 @@ def capture(board_name, serial_port, signal, seconds, window):
             # before releasing the port so the next MI recording cannot
             # silently capture ground or square-wave calibration data.
             if signal and board_name.startswith("cyton") and board.is_prepared():
-                board.config_board("d")
+                send_cyton_command(board, "d")
                 time.sleep(.25)
                 print("  restored Cyton channels to default normal inputs")
         finally:
@@ -261,12 +266,19 @@ def run_decider(data, fs, rows, window, hop, artifact_threshold,
     return dec
 
 
+def resolve_board(board=None, serial_port=None):
+    """Choose real Cyton when a COM port is supplied; otherwise synthetic."""
+    return board or ("cyton" if serial_port else "synthetic")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--board", default="synthetic",
-                    choices=["synthetic", "cyton", "cyton_daisy"])
-    ap.add_argument("--serial-port", default=None)
+    ap.add_argument(
+        "--board", default=None,
+        choices=["synthetic", "cyton", "cyton_daisy"],
+        help="default: cyton when --serial-port/--port is supplied, otherwise synthetic")
+    ap.add_argument("--serial-port", "--port", dest="serial_port", default=None)
     ap.add_argument("--signal", default=None,
                     help="Cyton test-signal command: " +
                          " ".join(repr(k) for k in CYTON_TEST_SIGNALS))
@@ -277,6 +289,7 @@ def main():
     ap.add_argument("--decide", action="store_true",
                     help="also replay through the real-time decision path")
     a = ap.parse_args()
+    a.board = resolve_board(a.board, a.serial_port)
 
     print("=" * 86)
     print("TEST SIGNAL CHECK -- known input, known correct output")

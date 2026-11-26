@@ -28,7 +28,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOG_ROOT = ROOT / "runtime_logs"
-DEFAULT_CHANNELS = ("FC3", "FC4", "C3", "Cz", "C4", "CP3", "CP4", "Pz")
+DEFAULT_CHANNELS = ("F3", "C3", "Cz", "P3", "Pz", "F4", "C4", "P4")
 
 
 def _slug(value):
@@ -290,7 +290,7 @@ class TrainingDataPerformance:
 
         from ML.quality import screen_trials
         self.screening_kw = {
-            "amp_uv": 400.0, "jump_uv": 75.0,
+            "amp_uv": None, "jump_uv": None,
             "flat_uv": .05, "z_max": 4.0,
             **dict(screening_kw or {}),
         }
@@ -311,14 +311,14 @@ class TrainingDataPerformance:
         # generic screener rejects a trial when ANY channel fails; these values
         # reveal whether one dead/noisy electrode is responsible for all trials
         # or the complete recording has a scaling/reference problem.
-        centred = self.X - self.X.mean(axis=2, keepdims=True)
-        peak_by_trial_channel = np.max(np.abs(centred), axis=2)
-        std_by_trial_channel = np.std(self.X, axis=2)
-        jump_by_trial_channel = np.max(np.abs(np.diff(self.X, axis=2)), axis=2)
+        metrics = self.screening["metrics"]
+        peak_by_trial_channel = np.asarray(metrics["peak_uv"], dtype=float)
+        std_by_trial_channel = np.asarray(metrics["std_uv"], dtype=float)
+        jump_by_trial_channel = np.asarray(metrics["jump_uv"], dtype=float)
         self.channel_failure_masks = {
-            "amplitude": peak_by_trial_channel > self.screening_kw["amp_uv"],
-            "flat": std_by_trial_channel < self.screening_kw["flat_uv"],
-            "jump": jump_by_trial_channel > self.screening_kw["jump_uv"],
+            name: np.asarray(mask, dtype=bool)
+            for name, mask in self.screening["channel_reasons"].items()
+            if name in {"amplitude", "flat", "jump"}
         }
         self.channel_diagnostics = []
         for channel in range(self.X.shape[1]):
@@ -332,17 +332,23 @@ class TrainingDataPerformance:
                 "peak_p95_uv": float(np.percentile(peak, 95)),
                 "peak_max_uv": float(np.max(peak)),
                 "amplitude_fail_trials": int(
-                    (peak > self.screening_kw["amp_uv"]).sum()),
+                    self.channel_failure_masks["amplitude"][:, channel].sum()),
+                "adaptive_amplitude_limit_uv": float(
+                    self.screening["adaptive_limits"]
+                    ["amplitude_history_uv"][channel]),
                 "std_median_uv": float(np.median(std)),
                 "std_min_uv": float(np.min(std)),
                 "std_max_uv": float(np.max(std)),
                 "flat_fail_trials": int(
-                    (std < self.screening_kw["flat_uv"]).sum()),
+                    self.channel_failure_masks["flat"][:, channel].sum()),
                 "jump_median_uv": float(np.median(jump)),
                 "jump_p95_uv": float(np.percentile(jump, 95)),
                 "jump_max_uv": float(np.max(jump)),
                 "jump_fail_trials": int(
-                    (jump > self.screening_kw["jump_uv"]).sum()),
+                    self.channel_failure_masks["jump"][:, channel].sum()),
+                "adaptive_jump_limit_uv": float(
+                    self.screening["adaptive_limits"]
+                    ["jump_history_uv"][channel]),
             })
         self.trial_signal_metrics = {
             "peak_median_uv": float(np.median(
@@ -356,10 +362,18 @@ class TrainingDataPerformance:
         # Explicit rejection indicators answer both "which screening step?" and
         # "which electrode caused that trial to be rejected?". Outlier and
         # compliance are trial-level rules and therefore have no channel list.
+        amplitude_rule = (
+            f"centred peak > explicit {self.screening_kw['amp_uv']} µV or "
+            "adaptive robust limit" if self.screening_kw["amp_uv"] is not None
+            else "adaptive robust amplitude/peer/clipping limit")
+        jump_rule = (
+            f"sample jump > explicit {self.screening_kw['jump_uv']} µV or "
+            "adaptive robust limit" if self.screening_kw["jump_uv"] is not None
+            else "adaptive robust sample-jump/peer limit")
         step_specs = (
-            ("amplitude", f"centred peak > {self.screening_kw['amp_uv']} µV"),
+            ("amplitude", amplitude_rule),
             ("flat", f"channel SD < {self.screening_kw['flat_uv']} µV"),
-            ("jump", f"sample jump > {self.screening_kw['jump_uv']} µV"),
+            ("jump", jump_rule),
             ("outlier", f"within-class robust z > {self.screening_kw['z_max']}"),
             ("noncompliant", "cue/trial marked noncompliant"),
         )
@@ -484,6 +498,11 @@ class TrainingDataPerformance:
                 for name, mask in self.screening["reasons"].items()
             },
             "screening_thresholds": dict(self.screening_kw),
+            "adaptive_limits": {
+                name: (value.tolist() if isinstance(value, np.ndarray)
+                       else float(value))
+                for name, value in self.screening["adaptive_limits"].items()
+            },
             "recording_decision": dict(self.recording_decision),
             "rejection_steps": list(self.rejection_steps),
             "trial_rejection_indicators": list(self.trial_rejection_indicators),

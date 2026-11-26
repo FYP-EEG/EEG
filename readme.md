@@ -196,7 +196,12 @@ category archives. Live loading resolves an exact personal task-set model first 
 compatible personal category specialist second; it never serves a public benchmark as
 personal calibration or silently falls back to one all-body classifier. See
 `docs/PUBLIC_MI_DATASETS.md` for licenses, true source-label mappings, import commands,
-subject-held-out evaluation, and optional EEGConformer/TCFormer fine-tuning.
+subject-held-out evaluation, and optional EEGConformer/TCFormer fine-tuning. The full
+licensed workflow is `python tools/prepare_public_mi.py --accept-licenses`: it downloads,
+separates, trains and selects one public model per category, verifies outputs, generates
+cohort/source/literature tables plus archive-backed separation figures, then safely removes
+its temporary downloads/cache. Add `--cleanup-policy models-reports --hash-evidence-inputs`
+on a local full run to retain only selected models and complete reports after verification.
 
 ### `BCISession` — the acquisition + decoding pipeline
 

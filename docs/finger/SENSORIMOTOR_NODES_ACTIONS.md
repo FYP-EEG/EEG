@@ -97,21 +97,21 @@ Kinesthetic MI includes the felt movement and expected sensory consequence. S1 a
 Current order:
 
 ```text
-FC3, FC4, C3, Cz, C4, CP3, CP4, Pz
+Cyton CH1..CH8: F3, C3, Cz, P3, Pz, F4, C4, P4
 ```
 
 ### Approximate functional interpretation
 
 | Channel | Approximate network sensitivity | Most relevant project use | Important warning |
 |---|---|---|---|
-| **FC3** | Left frontal/premotor region, often near BA6 | Right-hand/finger planning; imagined reach and action selection | Not a forehead/EOG channel and not a pure blink channel. It contains useful motor information. |
-| **FC4** | Right frontal/premotor region | Left-hand planning; bilateral/control information during right-hand tasks | Also not a pure artifact channel. |
+| **F3** | Left frontal region | Task set, right-hand action planning and broader frontal context | Less directly sensorimotor than the superseded FC3 position; not a dedicated EOG channel. |
 | **C3** | Left central sensorimotor region; may project to precentral or postcentral cortex | Main right-hand/finger sensorimotor ROI; mu/beta ERD | “C3 = M1 hand” is an approximation. One MRI study found C3 most often projected to postcentral rather than precentral cortex [2]. |
 | **Cz** | Midline central/SMA-adjacent and bilateral sensorimotor contribution | Movement onset, sequence, bilateral/common activity | Not exclusively feet; it can contribute to hand sequencing and general movement preparation. |
+| **P3** | Left parietal region | Right-hand spatial, proprioceptive and imagined reach/contact context | More posterior and less directly sensorimotor than the superseded CP3 position. |
+| **Pz** | Midline posterior parietal/precuneus-biased region | Spatial attention, target/reach context and network-level information | Less directly motor than central channels and vulnerable to visual-task confounds. |
+| **F4** | Right frontal region | Left-hand planning and bilateral/control context | Less directly sensorimotor than FC4 and not a pure artifact channel. |
 | **C4** | Right central sensorimotor region | Main left-hand ROI; ipsilateral/control information for right-hand imagery | Same localization caveat as C3. |
-| **CP3** | Left posterior sensorimotor/parietal region | Right-hand kinesthesia, imagined contact, hand state and reach/grasp transformation | May reflect several parietal regions because of volume conduction and anatomical variability. |
-| **CP4** | Right posterior sensorimotor/parietal region | Left-hand kinesthesia; control/bilateral pattern | Not a one-to-one S1 measurement. |
-| **Pz** | Midline posterior parietal/precuneus-biased region | Spatial attention, target/reach context and network-level information | Less directly motor than FC/C channels and vulnerable to visual-task confounds. |
+| **P4** | Right parietal region | Left-hand spatial/proprioceptive context and bilateral comparison | More posterior and less directly sensorimotor than CP4. |
 
 MRI-based electrode localisation demonstrates why these descriptions must remain probabilistic. In one fixed-cap study, C1 projected mainly to precentral gyrus/BA4, whereas C3 projected mainly to postcentral gyrus/BA1; central and parietal positions varied substantially across participants [2].
 
@@ -120,14 +120,14 @@ MRI-based electrode localisation demonstrates why these descriptions must remain
 For the existing montage, use channel groups as **regions of interest**, not individual action labels:
 
 ```text
-Right-hand contralateral ROI: FC3, C3, CP3
-Left-hand contralateral ROI:  FC4, C4, CP4
+Right-hand contralateral ROI: F3, C3, P3
+Left-hand contralateral ROI:  F4, C4, P4
 Midline/network ROI:          Cz, Pz
 ```
 
 For right-hand-only fine MI:
 
-- the left ROI should contain the strongest motor-relevant information;
+- C3 should contain the strongest directly motor-relevant information in the left ROI, while F3/P3 add broader frontal/parietal context;
 - the right ROI should be retained because MI can be bilateral and because it provides useful covariance/control information;
 - Cz and Pz can add sequence, common motor and parietal context;
 - classification should use all-channel patterns, covariance or connectivity rather than “highest power at one node”.
@@ -136,15 +136,15 @@ For right-hand-only fine MI:
 
 | Proposed command | Intended mental action | Expected dominant network—not a unique electrode | Current channels most likely to contribute |
 |---|---|---|---|
-| **Rock** | Kinesthetically close right hand into a fist / power grasp | aIPS/IPL + PMv/PMd + left M1/S1 + SMA | FC3, C3, CP3, Cz; possibly Pz |
-| **Paper** | Open and extend right hand/fingers | Left premotor + M1/S1; parietal hand-state representation | FC3, C3, CP3, Cz |
-| **Scissors** | Extend index and middle fingers while others remain flexed | Fine finger pattern in left M1/S1 plus premotor sequencing/shape network | FC3, C3, CP3, Cz; distinctions may be subtle |
-| **Spatial button press** | Reach to a target and press with a specified finger | PMd/SPL for reach + aIPS/PMv for press/grip + M1/S1 for finger | FC3, C3, CP3, Pz, Cz |
-| **Thumb/index/pinky direct selection** | Repetitive imagined flexion/press of one specified finger | Distributed left hand-knob and somatosensory pattern | FC3, C3, CP3, Cz; no electrode uniquely owns a finger |
+| **Rock** | Kinesthetically close right hand into a fist / power grasp | aIPS/IPL + PMv/PMd + left M1/S1 + SMA | F3, C3, P3, Cz; possibly Pz |
+| **Paper** | Open and extend right hand/fingers | Left premotor + M1/S1; parietal hand-state representation | F3, C3, P3, Cz |
+| **Scissors** | Extend index and middle fingers while others remain flexed | Fine finger pattern in left M1/S1 plus premotor sequencing/shape network | F3, C3, P3, Cz; distinctions may be subtle |
+| **Spatial button press** | Reach to a target and press with a specified finger | PMd/SPL for reach + aIPS/PMv for press/grip + M1/S1 for finger | F3, C3, P3, Pz, Cz |
+| **Thumb/index/pinky direct selection** | Repetitive imagined flexion/press of one specified finger | Distributed left hand-knob and somatosensory pattern | F3, C3, P3, Cz; no electrode uniquely owns a finger |
 
 ## 7. Implications for montage design
 
-The current symmetric montage is sensible for conventional left-versus-right MI. For right-hand-only finger or gesture decoding, its limitation is that only FC3, C3 and CP3 densely sample the contralateral hemisphere.
+The current symmetric montage is sensible for conventional left-versus-right MI. For right-hand-only finger or gesture decoding, its limitation is that C3 is the only strongly peri-Rolandic site in the left-side F3/C3/P3 group; F3 and P3 are broader frontal/parietal measurements.
 
 If electrode placement can be changed for a dedicated right-hand fine-MI experiment, literature supports testing denser left sensorimotor coverage around positions such as:
 
@@ -152,7 +152,7 @@ If electrode placement can be changed for a dedicated right-hand fine-MI experim
 FC5, FC3, FC1, C5, C3, C1, CP5, CP3/CP1
 ```
 
-This is a hypothesis-driven experimental montage, not a guaranteed optimal layout. Individual anatomy and mu-rhythm topography vary, and central/parietal electrode projections have measurable between-person variability [1], [2]. A separate EOG electrode should be used for blink monitoring rather than sacrificing FC3/FC4 motor channels.
+This is a hypothesis-driven experimental montage, not a guaranteed optimal layout. Individual anatomy and mu-rhythm topography vary, and central/parietal electrode projections have measurable between-person variability [1], [2]. A separate EOG electrode should be used for dedicated blink monitoring; F3/F4 provide only an indirect artifact view in the current layout.
 
 ## 8. Recommended feature interpretation
 
@@ -168,7 +168,7 @@ Slow cortical potentials/MRCPs can reflect preparation and movement onset. Front
 
 Fine actions share the same gross sensorimotor region, so absolute power at C3 alone may be similar across classes. More useful information may lie in:
 
-- covariance among FC3–C3–CP3–Cz;
+- covariance among F3–C3–P3–Cz;
 - time-varying network coupling;
 - broadband temporal/spectral structure;
 - source-space or spatially filtered patterns.
@@ -177,7 +177,7 @@ This supports retaining Riemannian tangent-space models for the first direct-but
 
 ## 9. Report-ready conclusion
 
-> Motor imagery should be modelled as activity within a distributed sensorimotor network rather than as a one-to-one mapping between actions and EEG electrodes. Primary motor and somatosensory cortices contribute movement- and body-state information, premotor regions contribute action preparation and hand configuration, supplementary motor regions contribute internally generated sequencing, and posterior parietal regions transform visual, proprioceptive and goal information into reach and grasp plans. Although the 10–10 electrode positions FC3, C3 and CP3 provide useful contralateral coverage for right-hand imagery, each scalp sensor records a spatial mixture of several cortical sources and varies anatomically between participants. Individual finger representations are ordered but strongly overlapping at the cortical level, so detailed hand actions must be decoded from multichannel spatiotemporal patterns rather than assigned to individual “finger electrodes.”
+> Motor imagery should be modelled as activity within a distributed sensorimotor network rather than as a one-to-one mapping between actions and EEG electrodes. Primary motor and somatosensory cortices contribute movement- and body-state information, premotor regions contribute action preparation and hand configuration, supplementary motor regions contribute internally generated sequencing, and posterior parietal regions transform visual, proprioceptive and goal information into reach and grasp plans. In the current montage, F3, C3 and P3 provide broad contralateral frontal-central-parietal coverage for right-hand imagery, with C3 the most directly sensorimotor of those positions. Each scalp sensor records a spatial mixture of several cortical sources and varies anatomically between participants. Individual finger representations are ordered but strongly overlapping at the cortical level, so detailed hand actions must be decoded from multichannel spatiotemporal patterns rather than assigned to individual “finger electrodes.”
 
 ## 10. References
 

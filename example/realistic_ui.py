@@ -230,7 +230,7 @@ _ap = argparse.ArgumentParser(add_help=False)
 _ap.add_argument("--bci", choices=["sine", "replay", "cyton", "button-mi",
                                     "intent-mi"], default=None)
 _ap.add_argument("--user", default=None)
-_ap.add_argument("--port", default=None)
+_ap.add_argument("--port", default="COM8")
 _ap.add_argument("--recording", default=None)
 _ap.add_argument("--scheme", choices=["tree", "scan"], default="scan")
 _ap.add_argument("--intent-map", "--finger-map", dest="intent_map", default=None)

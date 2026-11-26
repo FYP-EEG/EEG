@@ -94,19 +94,78 @@ def _robust_z(v):
     return 0.6745 * (v - med) / mad
 
 
-def screen_trials(X, labels=None, fs=250, amp_uv=400.0, jump_uv=75.0,
-                  flat_uv=0.05, z_max=4.0, band=(8.0, 30.0), verbose=True):
+def _adaptive_metric_mask(metric, z=12.0, peer_factor=8.0,
+                          history_factor=4.0, floor=1e-9):
+    """Find gross metric outliers without assuming one microvolt scale."""
+    values = np.asarray(metric, dtype=float)
+    baseline = np.median(values, axis=0)
+    spread = 1.4826 * np.median(np.abs(values - baseline), axis=0)
+    history_limit = np.maximum.reduce([
+        baseline + float(z) * spread,
+        float(history_factor) * np.maximum(baseline, floor),
+        np.full_like(baseline, floor),
+    ])
+    historical = values > history_limit[np.newaxis, :]
+
+    peer = np.median(values, axis=1)
+    peer_limit = float(peer_factor) * np.maximum(peer, floor)
+    peer_outlier = values > peer_limit[:, np.newaxis]
+
+    trial_scale = np.median(values, axis=1)
+    trial_median = float(np.median(trial_scale))
+    trial_spread = float(1.4826 * np.median(np.abs(trial_scale - trial_median)))
+    trial_limit = max(trial_median + float(z) * trial_spread,
+                      float(history_factor) * max(trial_median, floor), floor)
+    boardwide = trial_scale > trial_limit
+    mask = historical | peer_outlier | boardwide[:, np.newaxis]
+    return mask, {
+        "history_limit": history_limit,
+        "peer_limit": peer_limit,
+        "trial_limit": trial_limit,
+    }
+
+
+def _longest_true_run(mask):
+    longest = current = 0
+    for value in np.asarray(mask, dtype=bool):
+        current = current + 1 if value else 0
+        longest = max(longest, current)
+    return longest
+
+
+def _clipping_fraction(X):
+    fractions = np.zeros(X.shape[:2], dtype=float)
+    spans = np.ptp(X, axis=2)
+    for trial in range(X.shape[0]):
+        for channel in range(X.shape[1]):
+            row = X[trial, channel]
+            tolerance = max(float(spans[trial, channel]) * 1e-7, 1e-9)
+            low_mask = np.abs(row - np.min(row)) <= tolerance
+            high_mask = np.abs(row - np.max(row)) <= tolerance
+            longest = max(_longest_true_run(low_mask),
+                          _longest_true_run(high_mask))
+            # A periodic sine can revisit one exact maximum on every cycle.
+            # Saturation creates a contiguous plateau, so require >=3 adjacent
+            # extreme samples before treating repeated extrema as clipping.
+            if longest >= 3:
+                fractions[trial, channel] = max(
+                    float(np.mean(low_mask)), float(np.mean(high_mask)))
+    return fractions, spans
+
+
+def screen_trials(X, labels=None, fs=250, amp_uv=None, jump_uv=None,
+                  flat_uv=0.05, z_max=4.0, band=(8.0, 30.0), verbose=True,
+                  adaptive_z=12.0, peer_factor=8.0, history_factor=4.0,
+                  clip_fraction=0.02):
     """Flag trials that are unfit to train on.
 
     :param X: (n_trials, n_channels, n_times), microvolts
-    :param amp_uv: peak absolute amplitude above which a trial is artifact.
-        400, far above the 100 uV live blink lockout, because the measurement
-        above showed blink rejection LOSING 3.1 points: CSP already suppresses
-        blinks, so dropping those trials is pure data loss. This catches only
-        gross faults - a disconnected lead railing, a cable yanked.
-    :param jump_uv: largest allowed sample-to-sample step. Catches electrode
-        pops and cable knocks, which amplitude alone can miss when the
-        excursion is brief.
+    :param amp_uv: optional explicit peak cap for a controlled experiment.
+        The default is None: gross amplitude faults are found relative to the
+        recording's robust per-channel, per-trial and peer-channel scales.
+        Stable large-but-valid active-electrode scaling is therefore retained.
+    :param jump_uv: optional explicit sample-jump cap. By default jumps are
+        judged against robust measured step sizes rather than a fixed µV value.
     :param flat_uv: a channel with less variation than this is disconnected.
     :param z_max: robust z on log band power, computed WITHIN each class so a
         genuine class difference is not read as an outlier.
@@ -116,10 +175,39 @@ def screen_trials(X, labels=None, fs=250, amp_uv=400.0, jump_uv=75.0,
     n = len(X)
     reasons = {r: np.zeros(n, dtype=bool) for r in REASONS}
 
-    centred = X - X.mean(axis=2, keepdims=True)
-    reasons["amplitude"] = np.max(np.abs(centred), axis=(1, 2)) > amp_uv
-    reasons["flat"] = np.any(X.std(axis=2) < flat_uv, axis=1)
-    reasons["jump"] = np.max(np.abs(np.diff(X, axis=2)), axis=(1, 2)) > jump_uv
+    if X.ndim != 3 or X.shape[2] < 2:
+        raise ValueError(f"expected (trials,channels,times) with >=2 samples, got {X.shape}")
+    if not np.isfinite(X).all():
+        # Keep the public reason vocabulary stable: non-finite values are gross
+        # amplitude failures and must never enter filtering/model fitting.
+        nonfinite = ~np.isfinite(X).all(axis=(1, 2))
+    else:
+        nonfinite = np.zeros(n, dtype=bool)
+
+    centred = X - np.median(X, axis=2, keepdims=True)
+    peak_by_channel = np.max(np.abs(centred), axis=2)
+    std_by_channel = np.std(X, axis=2)
+    jump_by_channel = np.max(np.abs(np.diff(X, axis=2)), axis=2)
+    clip_by_channel, span_by_channel = _clipping_fraction(X)
+
+    amplitude_channels, amplitude_limits = _adaptive_metric_mask(
+        peak_by_channel, z=adaptive_z, peer_factor=peer_factor,
+        history_factor=history_factor, floor=max(float(flat_uv), 1e-9))
+    jump_channels, jump_limits = _adaptive_metric_mask(
+        jump_by_channel, z=adaptive_z, peer_factor=peer_factor,
+        history_factor=history_factor, floor=max(float(flat_uv), 1e-9))
+    clipping_channels = ((clip_by_channel >= float(clip_fraction)) &
+                         (span_by_channel > float(flat_uv) * 20.0))
+    amplitude_channels |= clipping_channels
+    if amp_uv is not None:
+        amplitude_channels |= peak_by_channel > float(amp_uv)
+    if jump_uv is not None:
+        jump_channels |= jump_by_channel > float(jump_uv)
+    flat_channels = std_by_channel < float(flat_uv)
+
+    reasons["amplitude"] = amplitude_channels.any(axis=1) | nonfinite
+    reasons["flat"] = flat_channels.any(axis=1)
+    reasons["jump"] = jump_channels.any(axis=1)
 
     # band power outliers, judged against this subject's own distribution
     sos = butter(4, list(band), btype="band", fs=fs, output="sos")
@@ -134,8 +222,29 @@ def screen_trials(X, labels=None, fs=250, amp_uv=400.0, jump_uv=75.0,
         reasons["outlier"][m] = z.max(axis=1) > z_max
 
     keep = ~np.any([reasons[r] for r in REASONS], axis=0)
-    return {"keep": keep, "reasons": reasons,
-            "report": format_report(keep, reasons, verbose=verbose)}
+    return {
+        "keep": keep,
+        "reasons": reasons,
+        "channel_reasons": {
+            "amplitude": amplitude_channels,
+            "flat": flat_channels,
+            "jump": jump_channels,
+            "clipping": clipping_channels,
+        },
+        "metrics": {
+            "peak_uv": peak_by_channel,
+            "std_uv": std_by_channel,
+            "jump_uv": jump_by_channel,
+            "clip_fraction": clip_by_channel,
+        },
+        "adaptive_limits": {
+            "amplitude_history_uv": amplitude_limits["history_limit"],
+            "amplitude_trial_uv": amplitude_limits["trial_limit"],
+            "jump_history_uv": jump_limits["history_limit"],
+            "jump_trial_uv": jump_limits["trial_limit"],
+        },
+        "report": format_report(keep, reasons, verbose=verbose),
+    }
 
 
 def apply_compliance(result, complied):

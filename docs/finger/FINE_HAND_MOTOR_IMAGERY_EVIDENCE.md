@@ -70,7 +70,7 @@ The current “reach to and press Rock/Paper/Scissors with the same right hand�
 
 ### 6.3 Hardware implications
 
-The current montage—FC3, FC4, C3, Cz, C4, CP3, CP4 and Pz—covers major sensorimotor areas and includes C3/FC3/CP3 over the hemisphere contralateral to right-hand imagery. This is useful for a feasibility pilot. However, individual fingers have adjacent and overlapping cortical representations, so spatial resolution is a greater limitation than sampling rate. A 250 Hz sampling rate is sufficient for the mu/beta and 4–40 Hz information used in several relevant studies, but eight broadly spaced channels cannot reproduce a 128- or 256-channel result.
+The current montage—F3, C3, Cz, P3, Pz, F4, C4 and P4—covers bilateral frontal, central and parietal regions and includes F3/C3/P3 over the hemisphere contralateral to right-hand imagery. C3 remains the most directly sensorimotor location in that left-side group; F3 and P3 add broader planning and parietal context but are less focused on peri-Rolandic cortex than the superseded FC3/CP3 positions. This is useful for a feasibility pilot. However, individual fingers have adjacent and overlapping cortical representations, so spatial resolution is a greater limitation than sampling rate. A 250 Hz sampling rate is sufficient for the mu/beta and 4–40 Hz information used in several relevant studies, but eight broadly spaced channels cannot reproduce a 128- or 256-channel result.
 
 ### 6.4 Model implications
 

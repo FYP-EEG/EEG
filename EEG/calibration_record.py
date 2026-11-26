@@ -48,6 +48,7 @@ Usage
 
 import argparse
 import datetime as dt
+import json
 import sys
 import time
 from pathlib import Path
@@ -484,12 +485,18 @@ def run_protocol(backend, ui, protocol, fs, window, hop, rest_seconds=4.0,
     return X, y, labels, False
 
 
-def save(X, y, labels, subject, fs, montage_name, target_freqs, out_dir):
+def save(X, y, labels, subject, fs, montage_name, target_freqs, out_dir,
+         channel_labels=None, acquisition=None):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     path = out_dir / f"calib_{subject}_{stamp}.npz"
     m = montage_mod.get(montage_name)
+    saved_channel_labels = (list(channel_labels) if channel_labels is not None
+                            else list(m.get("labels", [])))
+    if len(saved_channel_labels) != np.asarray(X).shape[1]:
+        raise ValueError(
+            "channel_labels must match the recording channel dimension")
     np.savez_compressed(
         path,
         X=np.asarray(X, dtype=np.float32),
@@ -498,9 +505,11 @@ def save(X, y, labels, subject, fs, montage_name, target_freqs, out_dir):
         fs=fs,
         montage=montage_name,
         target_freqs=np.asarray(target_freqs),
-        channel_labels=np.asarray(m.get("labels", [])),
+        channel_labels=np.asarray(saved_channel_labels),
         subject=subject,
         created=stamp,
+        acquisition_json=np.asarray(json.dumps(
+            acquisition or {}, sort_keys=True)),
     )
     return path
 

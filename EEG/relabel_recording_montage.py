@@ -7,9 +7,9 @@ This never changes EEG samples, trial labels or class indices. By default it
 writes a new file. Use --in-place only after inspecting the preview output; an
 `.original.npz` backup is retained beside every replaced file.
 
-Example for the reported lab channel order:
+Example for correcting files whose physical setup was cyton8_fp_occipital:
     python EEG/relabel_recording_montage.py \
-      --input "dataset/motor_intent/calib_brian_*.npz" \
+      --input "dataset/motor_intent/calib_anson_*.npz" \
       --montage cyton8_fp_occipital
 """
 

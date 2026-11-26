@@ -207,8 +207,8 @@ def load_physionet_edf(paths, target_channels=None, fs_out=250.0, window=750,
         paths = sorted(glob.glob(paths))
     if not paths:
         raise FileNotFoundError("no EDF files given")
-    target_channels = target_channels or ['FC3', 'FC4', 'C3', 'CZ',
-                                          'C4', 'CP3', 'CP4', 'PZ']
+    target_channels = target_channels or ['F3', 'C3', 'CZ', 'P3',
+                                          'PZ', 'F4', 'C4', 'P4']
 
     Xs, ys, subs = [], [], []
     from ML.public_mi import physionet_imagery_label_map

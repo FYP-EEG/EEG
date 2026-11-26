@@ -135,11 +135,13 @@ def reference_layer(reference, thresholds, window_s=3.0):
     reason_counts = {"amplitude": 0, "flat": 0, "jump": 0}
     kept = 0
     for window in windows:
-        centred = window - window.mean(axis=1, keepdims=True)
+        window_result = analyse_preflight(
+            window, fs=fs, elapsed=window.shape[1] / fs,
+            channel_labels=reference["labels"], thresholds=thresholds)
         failed = {
-            "amplitude": bool(np.max(np.abs(centred)) > thresholds["amp_uv"]),
-            "flat": bool(np.any(np.std(window, axis=1) < thresholds["flat_uv"])),
-            "jump": bool(np.max(np.abs(np.diff(window, axis=1))) > thresholds["jump_uv"]),
+            reason: any(reason in row["reasons"]
+                        for row in window_result["channels"])
+            for reason in reason_counts
         }
         for reason, value in failed.items():
             reason_counts[reason] += int(value)
@@ -319,8 +321,11 @@ def _stage(name, status, summary, details=None):
             "details": details or {}}
 
 
-def hardware_layers(port, montage, seconds=6.0):
-    """Known ground, known square and normal electrode checks in one command."""
+def hardware_layers(port, montage, seconds=6.0, electrode_mode="thinkpulse",
+                    cyton_gain=None):
+    """Known ground, square and mode-specific live-electrode checks."""
+    from EEG.cyton_commands import (live_channel_commands,
+                                    normalize_electrode_mode)
     from tools.test_signal_check import capture, classify_waveform
     labels = list(get_montage(montage).get("labels", []))
     stages = []
@@ -328,13 +333,19 @@ def hardware_layers(port, montage, seconds=6.0):
         ground, fs, rows = capture("cyton", port, "0", seconds, 750)
         eeg = np.asarray(ground[rows, :], dtype=float)
         rms = np.std(eeg, axis=1)
-        ground_ok = bool(np.isfinite(eeg).all() and eeg.shape[1] >= 750
-                         and np.median(rms) < 100)
+        transfer_available = bool(
+            np.isfinite(eeg).all() and eeg.shape[1] >= 750)
+        ground_ok = bool(transfer_available and np.median(rms) < 100)
         stages.append(_stage(
             "L0A known internal ground", "PASS" if ground_ok else "FAIL",
             "Cyton/ADC noise-floor transfer" if ground_ok else
             "internal-ground signal is missing, nonfinite or excessively noisy",
-            {"rms_uv": rms.tolist(), "samples": int(eeg.shape[1]), "fs": fs}))
+            {"rms_uv": rms.tolist(), "samples": int(eeg.shape[1]), "fs": fs,
+             "transfer_available": transfer_available}))
+        # No sample flow means the board/radio/port path is unavailable. Do not
+        # spend two more captures producing derivative square/Normal failures.
+        if not transfer_available:
+            return stages
     except Exception as exc:
         stages.append(_stage("L0A known internal ground", "FAIL",
                              f"{type(exc).__name__}: {exc}"))
@@ -367,7 +378,13 @@ def hardware_layers(port, montage, seconds=6.0):
         return stages
 
     try:
-        normal, fs, rows = capture("cyton", port, None, seconds, 750)
+        electrode_mode = normalize_electrode_mode(electrode_mode)
+        resolved_gain = int(cyton_gain if cyton_gain is not None else
+                            (8 if electrode_mode == "thinkpulse" else 24))
+        commands = live_channel_commands(electrode_mode, gain=resolved_gain)
+        normal, fs, rows = capture(
+            "cyton", port, None, seconds, 750,
+            channel_commands=commands)
         eeg = np.asarray(normal[rows[:8], -int(seconds * fs):], dtype=float)
         result = analyse_preflight(
             eeg, fs=fs, elapsed=eeg.shape[1] / fs, channel_labels=labels)
@@ -375,7 +392,9 @@ def hardware_layers(port, montage, seconds=6.0):
             "L1 live normal-electrode signal",
             "PASS" if result["acceptable"] else "FAIL",
             "normal electrode input passes gross checks" if result["acceptable"]
-            else "; ".join(result["debug"]), result))
+            else "; ".join(result["debug"]),
+            {**result, "electrode_mode": electrode_mode,
+             "cyton_gain": resolved_gain}))
     except Exception as exc:
         stages.append(_stage("L1 live normal-electrode signal", "FAIL",
                              f"{type(exc).__name__}: {exc}"))
@@ -613,6 +632,11 @@ def main():
     parser.add_argument("--channel-labels", default=None,
                         help="comma-separated physical NPZ channel order for reports/plots")
     parser.add_argument("--hardware-seconds", type=float, default=6.0)
+    parser.add_argument("--electrode-mode", choices=("passive", "thinkpulse"),
+                        default="thinkpulse")
+    parser.add_argument("--cyton-gain", type=int,
+                        choices=(1, 2, 4, 6, 8, 12, 24), default=None,
+                        help="default 8 for ThinkPulse, 24 for passive electrodes")
     parser.add_argument("--runtime", default=None,
                         help="runtime_logs/<app>/<timestamp> directory")
     parser.add_argument("--reference-csv", default=None,
@@ -635,11 +659,16 @@ def main():
                         help="diagnose later layers even after raw failure; results are not validity evidence")
     parser.add_argument("--skip-model", action="store_true",
                         help="skip potentially slow held-session classifier comparison")
-    parser.add_argument("--amp-uv", type=float, default=400.0)
-    parser.add_argument("--jump-uv", type=float, default=75.0)
+    parser.add_argument("--amp-uv", type=float, default=None,
+                        help="optional explicit cap; default uses adaptive scaling")
+    parser.add_argument("--jump-uv", type=float, default=None,
+                        help="optional explicit cap; default uses adaptive scaling")
     parser.add_argument("--flat-uv", type=float, default=.05)
     parser.add_argument("--z-max", type=float, default=4.0)
     args = parser.parse_args()
+    if (args.electrode_mode == "thinkpulse" and
+            args.cyton_gain is not None and args.cyton_gain > 8):
+        parser.error("ThinkPulse requires --cyton-gain 8 or lower")
 
     files = _expand(args.input or [])
     if not args.port and not files and not args.runtime and not args.reference_csv:
@@ -653,8 +682,9 @@ def main():
     stages = []
     if args.port:
         print(f"Running hardware transfer and normal-input checks on {args.port}...")
-        stages.extend(hardware_layers(args.port, args.montage,
-                                      seconds=args.hardware_seconds))
+        stages.extend(hardware_layers(
+            args.port, args.montage, seconds=args.hardware_seconds,
+            electrode_mode=args.electrode_mode, cyton_gain=args.cyton_gain))
     monitors = []
     if files:
         raw_stages, monitors = raw_layer(files, screening_kw, labels)
