@@ -34,6 +34,7 @@ import argparse
 import glob
 import sys
 import warnings
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -108,14 +109,151 @@ def layer1():
     import numpy as np
 
     from stream_bridge import (RingBuffer, StreamBridge, SyntheticBackend,
-                               ReplayBackend, BrainFlowBackend)  # noqa
+                               ReplayBackend, OpenBCICSVBackend,
+                               OpenBCIGUIUDPBackend, load_openbci_gui_csv,
+                               BrainFlowBackend)  # noqa
     from ML.bci_engine import BCIEngine                # noqa
     from ML.hybrid_classifier import HybridSSVEPClassifier  # noqa
     import inspect
     brainflow_start_source = inspect.getsource(BrainFlowBackend.start)
+    brainflow_signature = inspect.signature(BrainFlowBackend)
     check("direct Cyton acquisition resets persistent test inputs to defaults",
-          'config_board("d")' in brainflow_start_source and
+          'send_cyton_command(self.board, "d")' in brainflow_start_source and
           "self.reset_channels" in brainflow_start_source)
+    check("current hardware defaults are COM8 and ThinkPulse",
+          brainflow_signature.parameters["serial_port"].default == "COM8" and
+          brainflow_signature.parameters["electrode_mode"].default ==
+          "thinkpulse")
+    from EEG.cyton_commands import (channel_settings_command,
+                                    cyton_profile_settings,
+                                    live_channel_commands,
+                                    send_cyton_command)
+
+    class NonUtf8ResponseBoard:
+        def __init__(self):
+            self.commands = []
+
+        def config_board(self, command):
+            self.commands.append(command)
+            raise UnicodeDecodeError("utf-8", b"\xa0", 0, 1,
+                                     "invalid start byte")
+
+    response_board = NonUtf8ResponseBoard()
+    command_result = send_cyton_command(response_board, "d")
+    check("successful Cyton command tolerates only optional response decode failure",
+          response_board.commands == ["d"] and
+          command_result["response_decode_ignored"] and
+          "0xa0" in command_result["decode_error"])
+    thinkpulse_commands = live_channel_commands("thinkpulse")
+    check("ThinkPulse profile uses gain 8, Normal, BIAS off, SRB2 on for 8 channels",
+          len(thinkpulse_commands) == 8 and
+          thinkpulse_commands[0] == "x1040010X" and
+          thinkpulse_commands[-1] == "x8040010X" and
+          channel_settings_command(1, gain=24) == "x1060110X")
+    gui_profile = cyton_profile_settings("openbci_gui_default")
+    active_profile = cyton_profile_settings("thinkpulse_active", gain=4)
+    check("explicit GUI parity and active Cyton profiles cannot be conflated",
+          gui_profile["gain"] == 24 and gui_profile["include_bias"] and
+          gui_profile["srb2"] and not gui_profile["srb1"] and
+          active_profile["gain"] == 4 and not active_profile["include_bias"] and
+          active_profile["electrode_mode"] == "thinkpulse" and
+          live_channel_commands(profile="openbci_gui_default")[0] ==
+          "x1060110X")
+    try:
+        live_channel_commands("thinkpulse", gain=12)
+        check("ThinkPulse rejects Cyton gains above 8", False)
+    except ValueError as exc:
+        check("ThinkPulse rejects Cyton gains above 8", "8 or lower" in str(exc))
+
+    class FakeCytonBoard:
+        def __init__(self):
+            self.commands = []
+            self.prepared = False
+
+        def prepare_session(self):
+            self.prepared = True
+
+        def config_board(self, command):
+            self.commands.append(command)
+            return ""
+
+        def start_stream(self, _buffer_size):
+            pass
+
+        def get_board_data_count(self):
+            return 1
+
+        def is_prepared(self):
+            return self.prepared
+
+        def stop_stream(self):
+            pass
+
+        def release_session(self):
+            self.prepared = False
+
+    class FakeBoardShim:
+        @staticmethod
+        def get_sampling_rate(_board_id):
+            return 250
+
+        @staticmethod
+        def get_eeg_channels(_board_id):
+            return list(range(8))
+
+    fake_cyton = FakeCytonBoard()
+    thinkpulse_backend = BrainFlowBackend.__new__(BrainFlowBackend)
+    thinkpulse_backend.board = fake_cyton
+    thinkpulse_backend.board_id = 0
+    thinkpulse_backend.descriptor_board_id = 0
+    thinkpulse_backend.n_channels = 8
+    thinkpulse_backend.reset_channels = True
+    thinkpulse_backend.BoardShim = FakeBoardShim
+    thinkpulse_backend._live_channel_commands = thinkpulse_commands
+    thinkpulse_backend.start()
+    thinkpulse_backend.stop()
+    check("recording backend reapplies all eight ThinkPulse settings after reset",
+          fake_cyton.commands == ["d", *thinkpulse_commands])
+
+    import json
+    gui_udp = OpenBCIGUIUDPBackend(startup_timeout=0)
+    gui_payload = json.dumps({
+        "type": "timeSeriesRaw",
+        "data": [list(np.arange(5, dtype=float) + channel)
+                 for channel in range(8)],
+    }).encode("utf-8")
+    gui_chunk = gui_udp._decode_packet(gui_payload, ("127.0.0.1", 54321))
+    filtered_chunk = gui_udp._decode_packet(json.dumps({
+        "type": "timeSeriesFilt", "data": [[0.0]] * 8,
+    }).encode("utf-8"), ("127.0.0.1", 54321))
+    check("GUI UDP backend accepts only raw 8-channel JSON in microvolts",
+          gui_chunk.shape == (8, 5) and filtered_chunk is None and
+          gui_udp.info()["units"] == "uV" and
+          gui_udp.wrong_type_packets == 1 and gui_udp.packet_count == 1)
+
+    from EEG.raw_transfer import analyse_raw_transfer
+    transfer_report = analyse_raw_transfer(
+        clean_transfer := np.random.default_rng(771).normal(0, 5, (8, 1500)),
+        fs=250, elapsed=6.0,
+        source_info={"backend": "fixture", "units": "uV",
+                     "eeg_channel_rows": list(range(1, 9))},
+        transport={"packet_continuity_exact": True,
+                   "missing_packets_estimate": 0})
+    check("raw transfer evidence reports rows, physical variance and no filtering",
+          transfer_report["decision"] == "RAW_TRANSFER_PASS" and
+          transfer_report["raw_only"] and
+          not transfer_report["filtering_applied"] and
+          transfer_report["channels"][0]["board_row"] == 1 and
+          transfer_report["channels"][0]["std_uv"] > 1 and
+          transfer_report["packet_continuity"]["exact"])
+
+    from ML.montage import get as get_montage
+    motor_montage = get_montage("cyton8_motor")
+    check("current motor montage matches the confirmed Cyton CH1-CH8 order",
+          motor_montage["labels"] ==
+          ["F3", "C3", "CZ", "P3", "PZ", "F4", "C4", "P4"] and
+          motor_montage["artifact"] == [0, 5] and
+          motor_montage["motor_lateral"] == [1, 6])
 
     print("\n== Pre-recording connection/signal preflight ==")
     from EEG.signal_preflight import analyse_preflight, save_preflight_report
@@ -123,9 +261,32 @@ def layer1():
     clean_preflight = preflight_rng.normal(0, 5, (8, 1500))
     clean_result = analyse_preflight(
         clean_preflight, fs=250, elapsed=6.0,
-        channel_labels=["FC3", "FC4", "C3", "Cz", "C4", "CP3", "CP4", "Pz"])
+        channel_labels=["F3", "C3", "Cz", "P3", "Pz", "F4", "C4", "P4"])
     check("clean 8-channel/250-Hz baseline passes preflight",
           clean_result["connection_ok"] and clean_result["signal_ok"])
+    scaled_result = analyse_preflight(
+        clean_preflight * 100.0, fs=250, elapsed=6.0)
+    check("adaptive preflight retains stable large-but-valid common scaling",
+          scaled_result["signal_ok"] and scaled_result["adaptive_amplitude"] and
+          all(not row["reasons"] for row in scaled_result["channels"]))
+    offset_result = analyse_preflight(
+        clean_preflight + 200_000.0, fs=250, elapsed=6.0)
+    check("stable raw offset is measured but not mistaken for amplitude failure",
+          offset_result["signal_ok"] and
+          any("stable raw offset was retained" in line
+              for line in offset_result["debug"]))
+    local_outlier = clean_preflight.copy()
+    local_outlier[4] *= 1000.0
+    local_result = analyse_preflight(local_outlier, fs=250, elapsed=6.0)
+    check("adaptive preflight still rejects a gross local scale outlier",
+          not local_result["signal_ok"] and
+          "amplitude" in local_result["channels"][4]["reasons"])
+    clipped = np.clip(clean_preflight * 100_000.0, -187_500.0, 187_500.0)
+    clipped_result = analyse_preflight(clipped, fs=250, elapsed=6.0)
+    check("repeated extrema identify actual board-wide clipping",
+          not clipped_result["signal_ok"] and
+          clipped_result["boardwide_range_failure"] and
+          all("rail" in row["reasons"] for row in clipped_result["channels"]))
     square = np.tile(np.where(np.arange(1500) % 2, 2000.0, -2000.0), (8, 1))
     square_result = analyse_preflight(square, fs=250, elapsed=6.0)
     check("board-wide square/test signal is blocked with debug diagnosis",
@@ -137,6 +298,17 @@ def layer1():
     check("one flat electrode blocks recording and identifies its channel",
           not flat_result["signal_ok"] and
           flat_result["channels"][3]["reasons"] == ["flat"])
+    from ML.quality import screen_trials
+    epoch_set = np.stack([
+        preflight_rng.normal(0, 20, (8, 750)) for _ in range(20)])
+    scaled_screen = screen_trials(epoch_set * 100.0, verbose=False)
+    check("offline trial screening also adapts to a stable recording scale",
+          scaled_screen["keep"].all())
+    corrupted_epochs = epoch_set.copy(); corrupted_epochs[3, 4] *= 1000.0
+    corrupted_screen = screen_trials(corrupted_epochs, verbose=False)
+    check("offline adaptive screening rejects an isolated gross channel fault",
+          not corrupted_screen["keep"][3] and
+          corrupted_screen["channel_reasons"]["amplitude"][3, 4])
     import tempfile
     with tempfile.TemporaryDirectory() as preflight_tmp_text:
         preflight_html, preflight_json = save_preflight_report(
@@ -147,7 +319,10 @@ def layer1():
 
     print("\n== Mandatory headset startup gate ==")
     from startup.check_headband import (evaluate_hardware_stages,
-                                        save_startup_report)
+                                        run_headband_check,
+                                        save_startup_report,
+                                        startup_failure_hints,
+                                        wait_for_headband_ready)
     startup_source = [
         {"name": "L0A known internal ground", "status": "PASS",
          "summary": "ground", "details": {"rms_uv": [2.0] * 8,
@@ -162,9 +337,47 @@ def layer1():
          "summary": "normal", "details": clean_result},
     ]
     startup_stages = evaluate_hardware_stages(startup_source, True)
-    check("startup requires physical confirmation plus 8/8 ground/square/normal",
+    check("startup requires 8/8 ground/square/normal without a typed confirmation",
           len(startup_stages) == 4 and
-          all(row["status"] == "PASS" for row in startup_stages))
+          all(row["status"] == "PASS" for row in startup_stages) and
+          not startup_stages[0]["details"]["manual_confirmation_required"])
+    thinkpulse_stages = evaluate_hardware_stages(
+        startup_source, False, electrode_mode="thinkpulse")
+    check("ThinkPulse startup states SRB2/BIAS wiring without claiming verification",
+          thinkpulse_stages[0]["status"] == "PASS" and
+          not thinkpulse_stages[0]["details"]["bias_expected_attached"] and
+          not thinkpulse_stages[0]["details"]["software_verified"] and
+          "wiring contract" in thinkpulse_stages[0]["name"] and
+          "SRB2" in thinkpulse_stages[0]["summary"])
+    thinkpulse_hints = startup_failure_hints(
+        [{**thinkpulse_stages[0], "status": "FAIL"}], port="COM8",
+        electrode_mode="thinkpulse", cyton_gain=8)
+    check("ThinkPulse failure reproducer preserves electrode mode and gain",
+          any("--electrode-mode thinkpulse --cyton-gain 8" in value
+              for value in thinkpulse_hints))
+    disconnected_stages = evaluate_hardware_stages([{
+        "name": "L0A known internal ground", "status": "FAIL",
+        "summary": "BrainFlowError: unable to open board on COM8",
+        "details": {},
+    }], True)
+    check("disconnected Cyton is one root failure, not three misleading stages",
+          [row["status"] for row in disconnected_stages] ==
+          ["PASS", "FAIL", "SKIP", "SKIP"] and
+          "not connected or produced no usable EEG samples" in
+          disconnected_stages[1]["summary"])
+    decode_stages = evaluate_hardware_stages([{
+        "name": "L0A known internal ground", "status": "FAIL",
+        "summary": ("UnicodeDecodeError: 'utf-8' codec can't decode byte "
+                    "0xa0 in position 0"), "details": {},
+    }], True)
+    decode_hints = startup_failure_hints(decode_stages, port="COM8")
+    check("non-UTF8 Cyton response is not misreported as a disconnected board",
+          [row["status"] for row in decode_stages] ==
+          ["PASS", "FAIL", "SKIP", "SKIP"] and
+          decode_stages[1]["details"]["decode_failure"] and
+          "not proof that the board is disconnected" in
+          decode_stages[1]["summary"] and
+          any("brainflow>=5.22.0" in value for value in decode_hints))
     seven_channel_source = [dict(row) for row in startup_source]
     seven_channel_source[1] = {
         **startup_source[1], "details": {
@@ -176,14 +389,178 @@ def layer1():
     check("startup blocks recording when even one known-signal channel fails",
           blocked_stages[2]["status"] == "FAIL" and
           "7/8" in blocked_stages[2]["summary"])
+    blocked_hints = startup_failure_hints(
+        blocked_stages, port="COM8", montage="cyton8_motor")
+    check("startup failure names a likely fix and reproducible debugger command",
+          any("S2 square wave" in value and "CH8" in value
+              for value in blocked_hints) and
+          any("debug_bci_pipeline.py --port COM8" in value
+              for value in blocked_hints))
     with tempfile.TemporaryDirectory() as startup_tmp_text:
         startup_html, startup_json, startup_payload = save_startup_report(
             blocked_stages, Path(startup_tmp_text) / "startup", "COM8",
             "cyton8_motor")
-        check("startup gate writes READY/BLOCKED HTML and JSON evidence",
+        check("startup report helper can render READY/BLOCKED evidence",
               not startup_payload["passed"] and
               startup_payload["decision"] == "BLOCKED" and
+              startup_payload["debug_hints"] and
+              "How to fix/debug" in startup_html.read_text(encoding="utf-8") and
               startup_html.exists() and startup_json.exists())
+
+        import tools.debug_bci_pipeline as debug_module
+        original_hardware_layers = debug_module.hardware_layers
+        failed_base = Path(startup_tmp_text) / "failed_poll"
+        ready_base = Path(startup_tmp_text) / "valid_session"
+        try:
+            debug_module.hardware_layers = lambda *_args, **_kwargs: [{
+                "name": "L0A known internal ground", "status": "FAIL",
+                "summary": "board not connected", "details": {},
+            }]
+            failed_poll = run_headband_check(
+                "COM8", physical_confirmed=True, out_base=failed_base,
+                verbose=False)
+            debug_module.hardware_layers = lambda *_args, **_kwargs: startup_source
+            ready_poll = run_headband_check(
+                "COM8", physical_confirmed=True, out_base=ready_base,
+                verbose=False)
+        finally:
+            debug_module.hardware_layers = original_hardware_layers
+        check("automatic startup writes no failed-poll reports and one READY report",
+              not failed_poll["report_written"] and
+              not failed_base.with_suffix(".html").exists() and
+              not failed_base.with_suffix(".json").exists() and
+              ready_poll["report_written"] and
+              ready_base.with_suffix(".html").exists() and
+              ready_base.with_suffix(".json").exists())
+
+        import io
+        from contextlib import redirect_stdout
+        retry_calls, retry_sleeps = [], []
+        repeated_failure = {
+            "passed": False, "decision": "BLOCKED",
+            "stages": [{"name": "S2 square", "status": "FAIL",
+                        "summary": "square wave missing"}],
+        }
+        retry_payloads = [repeated_failure, repeated_failure, {
+            "passed": True, "decision": "READY", "report_written": False,
+            "stages": [{"name": "S2 square", "status": "PASS"}],
+        }]
+
+        def fake_startup_check(port, **kwargs):
+            retry_calls.append((port, kwargs["out_base"]))
+            return retry_payloads.pop(0)
+
+        retry_output = io.StringIO()
+        with redirect_stdout(retry_output):
+            retry_result = wait_for_headband_ready(
+                "COM8", physical_confirmed=True,
+                out_base=Path(startup_tmp_text) / "retry",
+                retry_delay=0, check_fn=fake_startup_check,
+                sleep_fn=retry_sleeps.append)
+        check("identical startup failure prints once and replaces one counter line",
+              retry_result["passed"] and len(retry_calls) == 3 and
+              retry_sleeps == [0.0, 0.0] and
+              retry_output.getvalue().count("STARTUP CHECK WAITING") == 1 and
+              "\r  Silent repeated failures: 1" in retry_output.getvalue() and
+              retry_calls[0][1] == retry_calls[1][1] == retry_calls[2][1])
+
+        gain_calls = []
+
+        def fake_gain_check(_port, **kwargs):
+            gain_calls.append(kwargs["cyton_gain"])
+            if kwargs["cyton_gain"] == 8:
+                return {
+                    "passed": False, "stages": [{
+                        "name": "S3 configured Normal input and live electrodes",
+                        "status": "FAIL", "summary": "railed",
+                        "details": {"channels": [
+                            {"reasons": ["rail"]} for _ in range(8)]},
+                    }],
+                }
+            return {"passed": True, "decision": "READY",
+                    "report_written": False, "stages": []}
+
+        gain_output = io.StringIO()
+        with redirect_stdout(gain_output):
+            gain_payload = wait_for_headband_ready(
+                "COM8", out_base=Path(startup_tmp_text) / "gain",
+                retry_delay=0, check_fn=fake_gain_check,
+                sleep_fn=lambda _delay: None,
+                electrode_mode="thinkpulse", cyton_gain=8)
+        check("board-wide clipping lowers ThinkPulse gain and returns selected gain",
+              gain_calls == [8, 4] and gain_payload["cyton_gain"] == 4 and
+              "reducing Cyton gain 8 -> 4" in gain_output.getvalue())
+
+    import EEG.data_record as recorder_module
+    direct_meta = recorder_module._acquisition_report_metadata({
+        "backend": "brainflow", "acquisition_route": "direct_cyton",
+        "fs": 250, "n_channels": 8, "units": "uV", "filtered": False,
+        "cyton_profile": "thinkpulse_active", "cyton_gain": 4,
+        "electrode_mode": "thinkpulse", "eeg_channel_rows": list(range(1, 9)),
+        "profile_settings": {"include_bias": False},
+    })
+    gui_meta = recorder_module._acquisition_report_metadata({
+        "backend": "openbci_gui_udp", "fs": 250, "n_channels": 8,
+        "units": "uV", "filtered": False, "bind_ip": "127.0.0.1",
+        "port": 12345, "packet_schema": "timeSeriesRaw",
+    })
+    csv_meta = recorder_module._acquisition_report_metadata({
+        "backend": "openbci_csv", "fs": 250, "n_channels": 8,
+        "path": "OpenBCI-RAW.csv", "input_unit": "uV", "scale_to_uv": 1.0,
+        "sample_rate_source": "metadata", "rows_dropped": 2,
+        "loop": True, "speed": 1.0,
+    })
+    check("recording metadata serializes direct, GUI UDP and CSV routes distinctly",
+          direct_meta["route"] == "direct_cyton" and
+          direct_meta["cyton_profile"] == "thinkpulse_active" and
+          direct_meta["eeg_channel_rows"] == list(range(1, 9)) and
+          gui_meta["route"] == "openbci_gui_udp" and
+          gui_meta["packet_sequence_available"] is False and
+          csv_meta["route"] == "openbci_gui_csv_replay" and
+          csv_meta["cue_alignment_valid"] is False and
+          csv_meta["rows_dropped"] == 2)
+    import startup.check_headband as startup_module
+    from types import SimpleNamespace
+    original_wait_ready = startup_module.wait_for_headband_ready
+    propagated_args = SimpleNamespace(
+        dry_run=False, eeg_csv=None, board_id=0, serial_port="COM8",
+        startup_retry_delay=0, subject="test", montage="cyton8_motor",
+        preflight_seconds=2.0, electrode_mode="thinkpulse", cyton_gain=8)
+    try:
+        startup_module.wait_for_headband_ready = lambda *_args, **_kwargs: {
+            "passed": True, "cyton_gain": 4}
+        recorder_module._run_required_headband_startup(propagated_args)
+    finally:
+        startup_module.wait_for_headband_ready = original_wait_ready
+    check("startup-selected gain propagates into recording backend arguments",
+          propagated_args.cyton_gain == 4)
+
+    original_live_preflight = recorder_module._start_real_capture_with_preflight
+    preflight_calls, ready_capture = [], object()
+
+    def fake_live_preflight(_backend, _args, quiet=False):
+        preflight_calls.append(quiet)
+        return None if len(preflight_calls) == 1 else ready_capture
+
+    try:
+        recorder_module._start_real_capture_with_preflight = fake_live_preflight
+        retained_capture = recorder_module._start_real_capture_until_ready(
+            object(), object(), retry_delay=0)
+    finally:
+        recorder_module._start_real_capture_with_preflight = original_live_preflight
+    check("failed live preflight keeps recorder/example alive until fixed",
+          retained_capture is ready_capture and len(preflight_calls) == 2)
+
+    def interrupting_cli():
+        raise KeyboardInterrupt
+
+    check("data recorder Ctrl+C aborts cleanly without a traceback",
+          recorder_module._run_cli_safely(interrupting_cli) == 130)
+    from tools.test_signal_check import resolve_board
+    check("signal checker treats a supplied COM port as real Cyton by default",
+          resolve_board(None, "COM8") == "cyton" and
+          resolve_board(None, None) == "synthetic" and
+          resolve_board("cyton_daisy", "COM8") == "cyton_daisy")
 
     print("\n== RingBuffer ==")
     rb = RingBuffer(3, 100)
@@ -332,6 +709,75 @@ def layer1():
         check("replay window has real signal variance", w is not None and w.std() > 0)
     else:
         print("  SKIP  no calibration recording found (run Step 3 first)")
+
+    print("\n== OpenBCI GUI CSV offline backend ==")
+    with tempfile.TemporaryDirectory() as csv_tmp_text:
+        csv_path = Path(csv_tmp_text) / "OpenBCI-RAW-test.csv"
+        csv_time = np.arange(1000) / 250.0
+        csv_signal = np.vstack([
+            20.0 * np.sin(2 * np.pi * 10.0 * csv_time + channel)
+            for channel in range(8)])
+        with csv_path.open("w", encoding="utf-8", newline="") as stream:
+            stream.write("%OpenBCI Raw EEG Data\n")
+            stream.write("%Number of channels = 8\n")
+            stream.write("%Sample Rate = 250 Hz\n")
+            stream.write("%Board = Cyton\n")
+            stream.write("Sample Index," + ",".join(
+                f"EXG Channel {index}" for index in range(8)) +
+                ",Accel Channel 0,Timestamp,Timestamp (Formatted)\n")
+            for sample in range(1000):
+                stream.write(str(sample) + "," + ",".join(
+                    f"{csv_signal[channel, sample]:.6f}"
+                    for channel in range(8)) +
+                    f",0,{1_700_000_000 + sample / 250.0:.6f},formatted\n")
+        csv_loaded = load_openbci_gui_csv(csv_path)
+        check("OpenBCI CSV metadata and exact eight EXG columns are recognized",
+              csv_loaded["data"].shape == (8, 1000) and
+              csv_loaded["fs"] == 250 and
+              csv_loaded["channel_numbers"] == list(range(8)) and
+              csv_loaded["rows_dropped"] == 0)
+        csv_preflight = analyse_preflight(
+            csv_loaded["data"], fs=csv_loaded["fs"], elapsed=4.0)
+        check("OpenBCI CSV signal feeds the same adaptive preflight",
+              csv_preflight["acceptable"])
+        csv_backend = OpenBCICSVBackend(csv_path, loop=True, speed=100.0)
+        csv_backend.start(); time.sleep(.02)
+        csv_chunk = csv_backend.read_available(); csv_backend.stop()
+        check("OpenBCI CSV backend replays channel-major µV samples",
+              csv_chunk is not None and csv_chunk.shape[0] == 8 and
+              csv_chunk.shape[1] > 0 and np.std(csv_chunk) > 0)
+
+        timestamp_only_path = Path(csv_tmp_text) / "timestamp-only.csv"
+        lines = csv_path.read_text(encoding="utf-8").splitlines()
+        timestamp_only_path.write_text("\n".join(
+            line for line in lines if "Sample Rate" not in line),
+            encoding="utf-8")
+        timestamp_loaded = load_openbci_gui_csv(timestamp_only_path)
+        check("OpenBCI CSV sample rate falls back to numeric timestamps",
+              abs(timestamp_loaded["fs"] - 250.0) < .1 and
+              timestamp_loaded["sample_rate_source"] == "timestamp")
+
+        labelled_path = Path(csv_tmp_text) / "electrode-labelled.csv"
+        electrode_labels = ["Fp1", "Fp2", "Fz", "Cz",
+                            "FC1", "FC2", "C3", "C4"]
+        offsets = np.asarray([
+            171259.88, 197867.2, 114104.27, 161374.05,
+            258360.95, 117286.94, 118994.92, 135717.16])
+        with labelled_path.open("w", encoding="utf-8", newline="") as stream:
+            stream.write("session_time," + ",".join(electrode_labels) + "\n")
+            for sample in range(1000):
+                values = offsets + csv_signal[:, sample]
+                stream.write(f"{1_791_882_133 + sample / 250.0:.6f}," +
+                             ",".join(f"{value:.6f}" for value in values) + "\n")
+        labelled_loaded = load_openbci_gui_csv(labelled_path)
+        labelled_preflight = analyse_preflight(
+            labelled_loaded["data"], fs=labelled_loaded["fs"], elapsed=4.0,
+            channel_labels=labelled_loaded["channel_labels"])
+        check("session_time plus standard electrode-labelled CSV is accepted",
+              labelled_loaded["column_schema"] == "electrode_labels" and
+              labelled_loaded["channel_labels"] == electrode_labels and
+              abs(labelled_loaded["fs"] - 250.0) < .1 and
+              labelled_preflight["acceptable"])
 
     # --------------------------------------------------------------
     # from test_step5_stimulus.py
@@ -508,8 +954,16 @@ def layer2():
     check("recorded windows", len(X) > 0 and not aborted)
     check("labels cover all blocks", set(labels) == set(names))
     tmp = Path(tempfile.mkdtemp())
-    p = calrec.save(X,y,labels,"TEST",250,"cyton8_ssvep",[15.0,20.0],tmp)
+    saved_acquisition = {"route": "synthetic", "backend": "simulate"}
+    p = calrec.save(
+        X, y, labels, "TEST", 250, "cyton8_ssvep", [15.0, 20.0], tmp,
+        acquisition=saved_acquisition)
     check("npz saved", p.exists())
+    with np.load(p, allow_pickle=False) as saved_npz:
+        acquisition_round_trip = json.loads(str(
+            np.asarray(saved_npz["acquisition_json"]).item()))
+    check("recording NPZ retains acquisition-route provenance",
+          acquisition_round_trip == saved_acquisition)
     Xl,yl,ll,fs,mont,tf = calibration.load(p)
     check("round-trips shape", Xl.shape == np.asarray(X,dtype=np.float32).shape)
     check("round-trips montage/fs", mont=="cyton8_ssvep" and fs==250)
@@ -875,11 +1329,14 @@ def layer3():
               abs(button_model.describe()["chance_accuracy"] - 1/3) < 1e-12)
 
     print("\n== Reusable scalable motor-intent profiles ==")
-    from ML.motor_intent import (MotorIntentMap, MotorIntentModel,
-        FINGER_INTENTS, UNIVERSAL_INTENTS, assess_intent_set,
-        general_recording_dir, intent_profile_dir, universal_profile_dir,
+    from ML.motor_intent import (CategoryMotorIntentRouter, MotorIntentMap,
+        MotorIntentModel, FINGER_INTENTS, UNIVERSAL_CATEGORY_INTENTS,
+        UNIVERSAL_INTENTS,
+        assess_intent_set, category_profile_dir, general_recording_dir,
+        intent_profile_dir,
         make_intent_label, parse_intent_map, task_set_key)
-    from ML.train_intent_mi import train_intent_user, load_intent_data
+    from ML.train_intent_mi import (load_intent_data, train_intent_user,
+                                    train_universal_category_models)
 
     default_map = MotorIntentMap({
         "rock": "left_index", "paper": "right_index",
@@ -905,13 +1362,45 @@ def layer3():
     check("universal recording vocabulary is ten fingers plus 3 body tasks",
           len(UNIVERSAL_INTENTS) == 13 and
           set(UNIVERSAL_INTENTS[-3:]) == {"left_hand", "right_hand", "both_feet"})
+    check("universal labels map into separate finger, hand and feet models",
+          set(UNIVERSAL_CATEGORY_INTENTS) == {"finger", "hand", "feet"} and
+          UNIVERSAL_CATEGORY_INTENTS["finger"] == FINGER_INTENTS and
+          UNIVERSAL_CATEGORY_INTENTS["hand"] == ("left_hand", "right_hand") and
+          UNIVERSAL_CATEGORY_INTENTS["feet"] == ("both_feet",))
+
+    class StubCategoryModel:
+        sample_freq = 250
+        montage = "cyton8_motor"
+
+        def __init__(self, result):
+            self.result = result
+
+        def predict_command(self, _window):
+            return self.result
+
+        def describe(self):
+            return {"result": self.result}
+
+    route_probe = CategoryMotorIntentRouter(
+        "demo", ["left_hand", "right_hand", "both_feet"],
+        {"hand": StubCategoryModel(("left_hand", .61)),
+         "feet": StubCategoryModel(("both_feet", .82))})
+    check("mixed-category router selects the highest accepted specialist output",
+          route_probe.predict_command(np.zeros((8, 750))) == ("both_feet", .82) and
+          route_probe.last_category == "feet")
 
     print("\n== Public MI registry, semantics and leakage-safe archives ==")
     from ML.motor_intent import (MI_CATEGORIES, UPPER_LIMB_INTENTS,
         category_for_intents, intent_category)
-    from ML.public_mi import (CYTON_MOTOR_CHANNELS, PUBLIC_MI_DATASETS,
-        get_public_dataset, load_standardized_archive, physionet_imagery_label_map,
-        public_archive_path, subject_folds, write_standardized_archive)
+    from ML.public_mi import (CYTON_MOTOR_CHANNELS, PUBLIC_DATA_FORMATS,
+        PUBLIC_MI_DATASETS, _validate_raw_format, get_public_dataset,
+        load_standardized_archive, moabb_motor_imagery_options,
+        physionet_imagery_label_map, public_archive_path, public_channel_plan,
+        public_native_sfreqs, read_ds008446_events, subject_folds,
+        write_standardized_archive)
+    from ML.train_public_mi import (
+        PUBLIC_PIPELINES, apply_public_training_policy,
+        train_public_category)
     check("four specialist categories are explicit",
           MI_CATEGORIES == ("finger", "hand", "upper_limb", "feet"))
     check("runtime intents map to one intended category",
@@ -933,6 +1422,113 @@ def layer3():
               "finger_thumb_unsided", "finger_index_unsided",
               "finger_middle_unsided", "finger_ring_unsided",
               "finger_pinky_unsided"})
+    with tempfile.TemporaryDirectory() as openneuro_tmp_text:
+        openneuro_tmp = Path(openneuro_tmp_text)
+        eeg_path = openneuro_tmp / "sub-01_task-random_run-01_eeg.edf"
+        eeg_path.touch()
+        events_path = openneuro_tmp / "sub-01_task-random_run-01_events.tsv"
+        fs = 512.0
+        event_rows = ["onset\tduration\ttrial_type"]
+        for sample in range(6144):
+            if sample < 1536:
+                code = 1
+            elif sample < 3072:
+                code = 3
+            elif sample < 4608:
+                code = 2
+            else:
+                code = 7
+            event_rows.append(f"{sample / fs**2:.12f}\t0\t{code}")
+        events_path.write_text("\n".join(event_rows) + "\n", encoding="utf-8")
+        reconstructed = read_ds008446_events(
+            eeg_path, fs, 7000, finger_registry["source_label_map"])
+        check("ds008446 repeated per-sample labels collapse to cue blocks",
+              reconstructed.tolist() ==
+              [[1536, 0, 3], [4608, 0, 7]])
+        check("ds008446 onsets use the release-specific squared-rate scale",
+              reconstructed[0, 0] ==
+              round((1536 / fs**2) * fs**2) and
+              reconstructed[0, 0] != round((1536 / fs**2) * fs))
+
+        events_path.write_text(
+            "onset\tduration\ttrial_type\n"
+            f"0\t0\t1\n{8000 / fs**2:.12f}\t0\t3\n",
+            encoding="utf-8")
+        try:
+            read_ds008446_events(
+                eeg_path, fs, 7000, finger_registry["source_label_map"])
+            check("ds008446 out-of-range cues fail with file diagnostics", False)
+        except ValueError as exc:
+            diagnostic = str(exc)
+            check("ds008446 out-of-range cues fail with file diagnostics",
+                  eeg_path.name in diagnostic and
+                  "sample=8000" in diagnostic and "0..6999" in diagnostic)
+    bnci_events = PUBLIC_MI_DATASETS["bnci2014_001"]["source_label_map"]
+    bnci_options = moabb_motor_imagery_options(bnci_events)
+    check("MOABB receives explicit classes and the 1-40 Hz import passband",
+          bnci_options["events"] == list(bnci_events) and
+          bnci_options["n_classes"] == len(bnci_events) == 3 and
+          bnci_options["fmin"] == 1.0 and bnci_options["fmax"] == 40.0)
+    automated_format_ids = {
+        "openneuro_ds008446", "physionet_eegmmidb", "bnci2014_001",
+        "ofner2017", "cho2017", "lee2019_mi"}
+    check("every automated public dataset has a verified format contract",
+          set(PUBLIC_DATA_FORMATS) == automated_format_ids and all(
+              {event.rsplit(":", 1)[-1] for event in
+               PUBLIC_MI_DATASETS[value]["source_label_map"]}.issubset(
+                  PUBLIC_DATA_FORMATS[value]["source_events"])
+              for value in automated_format_ids))
+
+    class PhysionetFormatProbe:
+        def __init__(self, sfreq):
+            self.info = {"sfreq": sfreq}
+            self.ch_names = list(CYTON_MOTOR_CHANNELS) + [
+                f"EEG{index:02d}" for index in range(56)]
+
+        def get_channel_types(self):
+            return ["eeg"] * 64
+
+    physio_128 = PhysionetFormatProbe(128.0)
+    try:
+        _validate_raw_format(
+            "physionet_eegmmidb", physio_128,
+            Path("S088R04.edf"), CYTON_MOTOR_CHANNELS)
+        known_128_accepted = True
+    except ValueError:
+        known_128_accepted = False
+    try:
+        _validate_raw_format(
+            "physionet_eegmmidb", physio_128,
+            Path("release/S087/S087R04.edf"), CYTON_MOTOR_CHANNELS)
+        unexpected_128_rejected = False
+    except ValueError:
+        unexpected_128_rejected = True
+    check("PhysioNet contract accepts only its three known 128 Hz subjects",
+          public_native_sfreqs("physionet_eegmmidb") == (128.0, 160.0) and
+          set(PUBLIC_DATA_FORMATS["physionet_eegmmidb"][
+              "native_sfreq_exceptions"]) == {"S088", "S092", "S100"} and
+          known_128_accepted and unexpected_128_rejected)
+    bnci_channel_plan = public_channel_plan("bnci2014_001")
+    check("only BNCI uses explicit interpolation for four absent Cyton nodes",
+          bnci_channel_plan["interpolated_channels"] ==
+          ("F3", "P3", "F4", "P4") and
+          set(bnci_channel_plan["native_channels"]) ==
+          {"C3", "CZ", "PZ", "C4"} and
+          all(not public_channel_plan(value)["interpolated_channels"]
+              for value in automated_format_ids - {"bnci2014_001"}))
+    check("verified formats distinguish BNCI MAT data and Lee EEG licensing",
+          PUBLIC_MI_DATASETS["bnci2014_001"]["format"] ==
+          "MAT via MOABB/NEMAR" and
+          PUBLIC_MI_DATASETS["lee2019_mi"]["license"] == "CC-BY-4.0")
+    check("registry reports cohort demographics without inventing missing values",
+          PUBLIC_MI_DATASETS["ofner2017"]["cohort"][
+              "sex_or_gender_as_reported"]["female"] == 9 and
+          PUBLIC_MI_DATASETS["cho2017"]["cohort"]["age"][
+              "mean_years"] == 24.8 and
+          PUBLIC_MI_DATASETS["physionet_eegmmidb"]["cohort"][
+              "sex_or_gender_as_reported"] is None and
+          "does not publish" in PUBLIC_MI_DATASETS[
+              "physionet_eegmmidb"]["cohort"]["completeness_note"])
     check("restricted arm dataset is catalogued but cannot auto-import",
           PUBLIC_MI_DATASETS["zenodo_18470278"]["access"] == "restricted" and
           PUBLIC_MI_DATASETS["zenodo_18470278"]["importer"] is None)
@@ -947,6 +1543,189 @@ def layer3():
     except ValueError:
         check("PhysioNet execution runs cannot be imported as imagery", True)
 
+    from tools.prepare_public_mi import (
+        AUTOMATED_DATASETS, ESTIMATED_FULL_DOWNLOAD_GB, build_plan,
+        cleanup_processed_datasets, ensure_disk_space,
+        existing_dataset_archives, make_parser as make_public_workflow_parser,
+        physionet_download_specs, resolve_bandpass, resolve_datasets,
+        safe_cleanup, select_best_candidate)
+    workflow_plan = build_plan(
+        resolve_datasets("all"), ("riemann_lr", "riemann_svm"),
+        subject_limit=3)
+    check("automated workflow includes six public datasets but skips restricted data",
+          tuple(row["id"] for row in workflow_plan["datasets"]) ==
+          AUTOMATED_DATASETS and
+          workflow_plan["restricted_skipped"] == ["zenodo_18470278"])
+    check("automation keeps all four model categories separate",
+          set(workflow_plan["categories"]) ==
+          {"finger", "hand", "upper_limb", "feet"} and
+          not workflow_plan["model_strategy"].startswith("universal"))
+    cleanup_args = make_public_workflow_parser().parse_args([
+        "--dry-run", "--cleanup-policy", "models-reports",
+        "--hash-evidence-inputs"])
+    check("local full-run options retain models/reports after hashed evidence",
+          cleanup_args.cleanup_policy == "models-reports" and
+          cleanup_args.hash_evidence_inputs and cleanup_args.dry_run)
+    bnci_workflow_row = next(
+        row for row in workflow_plan["datasets"]
+        if row["id"] == "bnci2014_001")
+    physio_workflow_row = next(
+        row for row in workflow_plan["datasets"]
+        if row["id"] == "physionet_eegmmidb")
+    check("dry-run exposes format, interpolation, cohort and native rates",
+          bnci_workflow_row["source_format"] == "MAT via MOABB/NEMAR" and
+          bnci_workflow_row["interpolated_channels"] ==
+          ["F3", "P3", "F4", "P4"] and
+          bnci_workflow_row["cohort"]["participants"] == 9 and
+          bnci_workflow_row["cohort"]["age"] is None and
+          physio_workflow_row["verified_native_sfreqs"] == [128.0, 160.0])
+    check("disk planning covers verified large MOABB sourcedata manifests",
+          ESTIMATED_FULL_DOWNLOAD_GB["ofner2017"] >= 27.4 and
+          ESTIMATED_FULL_DOWNLOAD_GB["lee2019_mi"] >= 64.9)
+    broadband_plan = build_plan(
+        resolve_datasets("all"), ("riemann_lr",), subject_limit=3,
+        import_bandpass=resolve_bandpass("0.3,40"))
+    check("separate experiment plans preserve a declared broad import passband",
+          broadband_plan["import_bandpass_hz"] == [0.3, 40.0] and
+          workflow_plan["import_bandpass_hz"] == [1.0, 40.0])
+    physio_specs = physionet_download_specs(subject_limit=2)
+    downloaded_runs = {int(Path(row["relative"]).stem[-2:])
+                       for row in physio_specs}
+    check("automation downloads only six PhysioNet imagery runs per subject",
+          len(physio_specs) == 12 and downloaded_runs == {4, 6, 8, 10, 12, 14})
+    selected_candidate = select_best_candidate([
+        {"status": "success", "pipeline": "riemann_lr",
+         "accuracy": .61, "std": .05},
+        {"status": "success", "pipeline": "riemann_svm",
+         "accuracy": .67, "std": .08},
+        {"status": "failed", "pipeline": "tcformer", "error": "optional"},
+    ])
+    check("automation selects the best successful subject-held-out candidate",
+          selected_candidate["pipeline"] == "riemann_svm")
+    robust_candidate = select_best_candidate([
+        {"status": "success", "pipeline": "subject_winner",
+         "accuracy": .75, "std": .04,
+         "dataset_accuracy": .61, "dataset_std": .08},
+        {"status": "success", "pipeline": "dataset_winner",
+         "accuracy": .70, "std": .05,
+         "dataset_accuracy": .66, "dataset_std": .03},
+    ])
+    check("multi-source public selection prioritizes dataset-held-out evidence",
+          robust_candidate["pipeline"] == "dataset_winner" and
+          "leave-one-dataset-out" in
+          robust_candidate["selection_criterion"])
+    with tempfile.TemporaryDirectory() as cleanup_tmp_text:
+        cleanup_root = Path(cleanup_tmp_text)
+        owned_stage = cleanup_root / "auto"
+        owned_stage.mkdir(); (owned_stage / "partial.bin").write_bytes(b"test")
+        safe_cleanup(owned_stage, cleanup_root)
+        outside_blocked = False
+        try:
+            safe_cleanup(cleanup_root, cleanup_root)
+        except ValueError:
+            outside_blocked = True
+        processed_root = cleanup_root / "processed"
+        cho_processed = processed_root / "cho2017" / "hand"
+        other_processed = processed_root / "unrelated_local_data"
+        cho_processed.mkdir(parents=True)
+        other_processed.mkdir(parents=True)
+        (cho_processed / "epochs.npz").write_bytes(b"archive")
+        (other_processed / "keep.txt").write_text("keep", encoding="utf-8")
+        processed_cleanup = cleanup_processed_datasets(
+            ("cho2017",), processed_root)
+        check("models-reports cleanup removes only named processed datasets",
+              not (processed_root / "cho2017").exists() and
+              other_processed.exists() and processed_root.exists() and
+              processed_cleanup["bytes_removed"] == len(b"archive"))
+        check("cleanup deletes only workflow-owned children and protects its root",
+              not owned_stage.exists() and outside_blocked)
+        disk_guard_blocked = False
+        try:
+            ensure_disk_space(cleanup_root, 1e12)
+        except RuntimeError:
+            disk_guard_blocked = True
+        check("automation fails early when the free-space threshold is unmet",
+              ensure_disk_space(cleanup_root, 0) >= 0 and disk_guard_blocked)
+
+    from ML.public_mi_experiments import (
+        CATEGORY_EXPERIMENT_RECIPES, OneVsRestFilterBankCSP, dataset_folds,
+        harmonize_experiment_data, recipe_frequency_compatible)
+    experiment_X = np.random.default_rng(778).normal(0, 1e-6, (14, 8, 300))
+    experiment_data = {
+        "X": experiment_X,
+        "labels": np.asarray(
+            ["idle", "both_feet"] * 3 + ["both_feet"] * 4 +
+            ["idle", "both_feet"] * 2),
+        "subjects": np.asarray([f"s{i // 2}" for i in range(14)]),
+        "sessions": np.asarray([f"session-{i // 2}" for i in range(14)]),
+        "source_dataset": np.asarray(
+            ["physionet_eegmmidb"] * 6 + ["bnci2014_001"] * 4 +
+            ["other_complete"] * 4),
+        "source_labels": np.asarray(["event"] * 14),
+        "category": "feet", "fs": 250.0, "units": "volts",
+        "channel_labels": np.asarray(CYTON_MOTOR_CHANNELS),
+        "imagery_or_execution": "imagery",
+    }
+    balanced_feet, feet_audit = harmonize_experiment_data(
+        experiment_data, "feet", random_state=42)
+    production_feet, production_feet_policy = apply_public_training_policy(
+        experiment_data, "feet")
+    feet_cells = Counter(zip(
+        balanced_feet["source_dataset"], balanced_feet["labels"]))
+    production_feet_cells = Counter(zip(
+        production_feet["source_dataset"], production_feet["labels"]))
+    check("feet experiments reject source-only classes and balance source-label cells",
+          "bnci2014_001" not in set(balanced_feet["source_dataset"]) and
+          set(feet_audit["excluded_incomplete_sources"]) == {"bnci2014_001"} and
+          len(set(feet_cells.values())) == 1)
+    check("production feet model enforces the same source-complete balance",
+          "bnci2014_001" not in set(production_feet["source_dataset"]) and
+          production_feet_policy["id"] ==
+          "source-complete-idle-versus-both-feet-v1" and
+          len(set(production_feet_cells.values())) == 1)
+    hand_data = dict(experiment_data)
+    hand_data["category"] = "hand"
+    hand_data["labels"] = np.asarray(
+        ["left_hand", "right_hand", "idle", "both_hands", "left_hand",
+         "right_hand", "left_hand", "right_hand", "idle", "both_hands",
+         "left_hand", "right_hand", "left_hand", "right_hand"])
+    harmonized_hand, hand_audit = harmonize_experiment_data(hand_data, "hand")
+    production_hand, production_policy = apply_public_training_policy(
+        hand_data, "hand")
+    check("hand experiments harmonize labels to left versus right only",
+          set(harmonized_hand["labels"]) == {"left_hand", "right_hand"} and
+          hand_audit["target_labels"] == ["left_hand", "right_hand"])
+    check("public hand model adopts the same binary cross-source task",
+          set(production_hand["labels"]) == {"left_hand", "right_hand"} and
+          production_policy["id"] ==
+          "cross-source-left-versus-right-hand-v1" and
+          "fbcsp_lda" in PUBLIC_PIPELINES)
+    source_split = list(dataset_folds(
+        ["a", "a", "b", "b"],
+        ["left_hand", "right_hand", "left_hand", "right_hand"]))
+    check("experiment CV leaves out whole class-complete datasets",
+          len(source_split) == 2 and all(
+              not (set(np.asarray(["a", "a", "b", "b"])[train]) &
+                   set(np.asarray(["a", "a", "b", "b"])[test]))
+              for train, test, _source in source_split))
+    upper_low_recipe = CATEGORY_EXPERIMENT_RECIPES["upper_limb"][0]
+    check("frequency provenance blocks irrecoverable low-frequency experiments",
+          not recipe_frequency_compatible(upper_low_recipe, (1.0, 40.0)) and
+          recipe_frequency_compatible(upper_low_recipe, (0.3, 40.0)))
+    sample_times = np.arange(300) / 250.0
+    fbcsp_X = np.asarray([
+        np.tile(np.sin(2 * np.pi * (10 if i < 6 else 18) * sample_times),
+                (8, 1)) +
+        np.random.default_rng(900 + i).normal(0, .05, (8, 300))
+        for i in range(12)
+    ])
+    fbcsp = OneVsRestFilterBankCSP(
+        bands=((8.0, 12.0), (16.0, 20.0)), sample_freq=250)
+    fbcsp_features = fbcsp.fit_transform(fbcsp_X, np.repeat([0, 1], 6))
+    check("experimental filter-bank CSP produces finite binary features",
+          fbcsp_features.shape == (12, 8) and
+          np.isfinite(fbcsp_features).all())
+
     with tempfile.TemporaryDirectory() as public_tmp_text:
         public_root = Path(public_tmp_text)
         archive_path = public_archive_path("cho2017", "hand", root=public_root)
@@ -959,13 +1738,18 @@ def layer3():
             public_sessions, source_dataset="cho2017",
             source_labels=public_labels, channel_labels=CYTON_MOTOR_CHANNELS,
             fs=250, units="volts", category="hand",
-            preprocessing={"bandpass_hz": [8, 30]})
+            preprocessing={"bandpass_hz": [1, 40]})
         public_loaded = load_standardized_archive(archive_path)
         check("standardized public archive retains provenance and source labels",
               public_loaded["X"].shape == (12, 8, 750) and
               public_loaded["source_dataset"] == "cho2017" and
               public_loaded["source_labels"].tolist() == public_labels.tolist() and
-              public_loaded["preprocessing"]["bandpass_hz"] == [8, 30])
+              public_loaded["preprocessing"]["bandpass_hz"] == [1, 40])
+        check("full automation does not mistake a pilot archive for all subjects",
+              existing_dataset_archives(
+                  "cho2017", public_root, subject_limit=3) is not None and
+              existing_dataset_archives(
+                  "cho2017", public_root, subject_limit=None) is None)
         public_folds = list(subject_folds(
             public_loaded["subjects"], public_loaded["labels"], n_splits=3))
         check("public CV holds out whole subjects",
@@ -973,6 +1757,78 @@ def layer3():
                   not (set(public_loaded["subjects"][train]) &
                        set(public_loaded["subjects"][test]))
                   for train, test in public_folds))
+        lee_path = public_archive_path("lee2019_mi", "hand", root=public_root)
+        write_standardized_archive(
+            lee_path, public_X * 1.01, public_labels, public_subjects,
+            public_sessions, source_dataset="lee2019_mi",
+            source_labels=public_labels, channel_labels=CYTON_MOTOR_CHANNELS,
+            fs=250, units="volts", category="hand",
+            preprocessing={"bandpass_hz": [1, 40]})
+        binary_result = train_public_category(
+            [archive_path, lee_path], category="hand", pipeline="fbcsp_lda",
+            output_root=public_root / "models", n_splits=3, verbose=False)
+        binary_bundle = joblib.load(binary_result["path"])
+        check("production hand bundle records binary labels and dataset-held-out CV",
+              binary_bundle["version"] == 2 and
+              binary_bundle["labels"] == ["left_hand", "right_hand"] and
+              binary_bundle["training_policy"]["id"] ==
+              "cross-source-left-versus-right-hand-v1" and
+              binary_bundle["dataset_cv_folds"] == 2 and
+              binary_result["dataset_accuracy"] is not None)
+        from ML.public_mi_evidence import generate_public_mi_evidence
+        evidence_root = public_root / "evidence"
+        evidence, evidence_md, evidence_json, evidence_csv = \
+            generate_public_mi_evidence(
+                public_root, evidence_root,
+                model_root=public_root / "models", categories=("hand",),
+                n_splits=3, seed=42, project_root=ROOT)
+        evidence_hand = evidence["categories"]["hand"]
+        check("public evidence generator writes archive-backed grouped metrics",
+              evidence_hand["status"] == "success" and
+              evidence_hand["subject_held_out"]["available"] and
+              evidence_hand["dataset_held_out"]["available"] and
+              evidence_md.exists() and evidence_json.exists() and
+              evidence_csv.exists() and
+              "Saved selected model" in evidence_md.read_text(encoding="utf-8"))
+        import csv as csv_module
+        with evidence_csv.open(newline="", encoding="utf-8") as evidence_fh:
+            source_rows = list(csv_module.DictReader(evidence_fh))
+        check("public comparison table includes demographics and citable references",
+              len(source_rows) == 6 and
+              all(row["References"].startswith("https://")
+                  for row in source_rows) and
+              "female=9" in next(
+                  row["Sex/gender as reported"] for row in source_rows
+                  if row["Dataset"] == "ofner2017") and
+              next(row["Age"] for row in source_rows
+                   if row["Dataset"] == "physionet_eegmmidb").startswith(
+                       "Not reported") and
+              "10.3389/fnins.2012.00039" in next(
+                  row["References"] for row in source_rows
+                  if row["Dataset"] == "bnci2014_001"))
+        inventory_path = evidence_root / "dataset_archive_inventory.csv"
+        with inventory_path.open(newline="", encoding="utf-8") as inventory_fh:
+            inventory_rows = list(csv_module.DictReader(inventory_fh))
+        cho_inventory = next(
+            row for row in inventory_rows
+            if row["Dataset"] == "cho2017" and row["Category"] == "hand")
+        check("public report inventories actual candidates, trials and samples",
+              cho_inventory["Status"] == "available" and
+              cho_inventory["Imported participants"] == "3" and
+              cho_inventory["Trials"] == "12" and
+              cho_inventory["Channels"] == "8" and
+              cho_inventory["Samples per trial"] == "750" and
+              cho_inventory["Total channel samples"] == str(12 * 8 * 750))
+        check("public evidence generator emits class-colored CSP and tangent figures",
+              {row["kind"] for row in evidence_hand["figures"]} == {
+                  "csp_class_separation", "tangent_pca",
+                  "class_covariance_summary", "subject_oof_confusion",
+                  "subject_fold_scores"} and
+              all(Path(row["path"]).is_file()
+                  for row in evidence_hand["figures"]) and
+              next(row for row in evidence_hand["figures"]
+                   if row["kind"] == "csp_class_separation")["classes"] ==
+              ["left_hand", "right_hand"])
         try:
             write_standardized_archive(
                 public_root / "invented.npz", public_X[:2],
@@ -998,8 +1854,6 @@ def layer3():
 
     with tempfile.TemporaryDirectory() as pool_tmp_text:
         pool_root = Path(pool_tmp_text)
-        pool_dir = universal_profile_dir("demo", root=pool_root)
-        pool_dir.mkdir(parents=True)
         prng = np.random.default_rng(999)
         pX, pL = [], []
         for class_i, intent in enumerate((*UNIVERSAL_INTENTS, "idle")):
@@ -1007,32 +1861,47 @@ def layer3():
                 epoch = prng.normal(0, 5, (8, 750))
                 epoch[1 + class_i % 7] *= .2
                 pX.append(epoch); pL.append(make_intent_label(intent))
-        np.savez_compressed(pool_dir / "calib_universal_0.npz",
-                            X=pX, y=np.arange(len(pX)), labels=pL,
-                            fs=250, montage="cyton8_motor")
-        pooled = load_intent_data(
-            "demo", ["left_index", "right_index", "right_pinky"],
-            root=pool_root, data_root=pool_root / "empty-general")
-        check("task model filters its subset from the reusable universal pool",
-              set(pooled["class_map"].values()) ==
-              {"left_index", "right_index", "right_pinky", "idle"} and
-              pooled["X"].shape[0] == 32 and
-              pooled["files"] == ["legacy-universal/calib_universal_0.npz"])
-
         general_root = pool_root / "training-dataset"
         general_dir = general_recording_dir(general_root)
         general_dir.mkdir(parents=True)
         np.savez_compressed(
-            general_dir / "calib_subject_session0.npz",
+            general_dir / "calib_runtime_user_session0.npz",
             X=pX, y=np.arange(len(pX)), labels=pL,
-            fs=250, montage="cyton8_motor", subject="subject")
+            fs=250, montage="cyton8_motor", subject="runtime_user")
+        np.savez_compressed(
+            general_dir / "calib_other_subject_session0.npz",
+            X=pX, y=np.arange(len(pX)), labels=pL,
+            fs=250, montage="cyton8_motor", subject="other_subject")
+        model_root = pool_root / "profiles"
         generalized = load_intent_data(
             "runtime_user", ["left_index", "right_index", "right_pinky"],
-            root=pool_root / "empty-profiles", data_root=general_root)
-        check("standalone recordings load from generalized dataset, not profiles",
+            root=model_root, data_root=general_root)
+        check("universal training uses only the requested subject's data",
               generalized["X"].shape[0] == 32 and
               generalized["files"] ==
-              ["general/calib_subject_session0.npz"])
+              ["general/calib_runtime_user_session0.npz"])
+        category_results = train_universal_category_models(
+            "runtime_user", root=model_root, data_root=general_root,
+            screen=False, verbose=False, pipelines=("riemann_lr",))
+        check("one universal pool trains separate finger, hand and feet models",
+              set(category_results) == {"finger", "hand", "feet"} and
+              all((category_profile_dir(
+                  "runtime_user", category, root=model_root) /
+                  "intent_model.joblib").exists()
+                  for category in category_results))
+        finger_game_model = MotorIntentModel.load_resolved(
+            "runtime_user", ["left_index", "right_index", "right_pinky"],
+            root=model_root, confidence_threshold=0.0)
+        mixed_game_model = MotorIntentModel.load_resolved(
+            "runtime_user", ["left_hand", "right_hand", "both_feet"],
+            root=model_root, confidence_threshold=0.0)
+        check("finger games select the personal finger category model",
+              finger_game_model.describe()["model_scope"] ==
+              "personal-category:finger")
+        check("mixed games route through their hand and feet category models",
+              mixed_game_model.describe()["model_scope"] ==
+              "personal-category-router" and
+              set(mixed_game_model.describe()["categories"]) == {"hand", "feet"})
 
     with tempfile.TemporaryDirectory() as intent_tmp_text:
         intent_root = Path(intent_tmp_text)
@@ -1074,10 +1943,10 @@ def layer3():
               predicted in set(intentions) and predicted_conf > 0)
         resolved_exact = MotorIntentModel.load_resolved(
             "demo", intentions, root=intent_root, confidence_threshold=0.0)
-        check("runtime resolver prefers the exact task-set model",
-              resolved_exact.describe()["model_scope"] == "exact-task-set")
+        check("runtime retains an exact task-set model only as fallback",
+              resolved_exact.describe()["model_scope"] ==
+              "exact-task-set-fallback")
 
-        from ML.motor_intent import category_profile_dir
         category_dir = category_profile_dir("demo", "finger", root=intent_root)
         category_dir.mkdir(parents=True)
         import joblib
@@ -1089,8 +1958,9 @@ def layer3():
         resolved_category = MotorIntentModel.load_resolved(
             "demo", intentions[:2], root=intent_root, confidence_threshold=0.0)
         resolved_description = resolved_category.describe()
-        check("runtime falls back only to a compatible personal category model",
-              resolved_description["model_scope"] == "personal-category" and
+        check("runtime selects a compatible personal category model",
+              resolved_description["model_scope"] ==
+              "personal-category:finger" and
               resolved_description["intents"] == list(intentions[:2]) and
               resolved_description["trained_intents"] == list(intentions))
 
@@ -1671,7 +2541,9 @@ def layer5():
           {"version","ui_available","hardware_available","montages"})
     for name in ["BCISession","Command","BCIEngine","StreamBridge","TextBuffer",
                  "HybridSSVEPClassifier","TRCAClassifier","BrainButton","ButtonGroup",
-                 "Scanner","SyntheticBackend","ReplayBackend","NO_ACTION"]:
+                 "Scanner","SyntheticBackend","ReplayBackend",
+                 "OpenBCICSVBackend","CSVReplayBackend",
+                 "load_openbci_gui_csv","NO_ACTION"]:
         check(f"exports {name}", hasattr(bci_sdk, name))
     check("__all__ matches real attributes",
           all(hasattr(bci_sdk,n) for n in bci_sdk.__all__))
@@ -1874,7 +2746,7 @@ def layer5():
               training_report["shape"] == [16, 8, 750] and
               training_report["class_counts"]["intent::left_hand"] == 8 and
               training_report["channel_labels"] ==
-              ["FC3", "FC4", "C3", "CZ", "C4", "CP3", "CP4", "PZ"])
+              ["F3", "C3", "CZ", "P3", "PZ", "F4", "C4", "P4"])
         check("training monitor exposes screening verdict and selected EEG trial",
               isinstance(first_trial["keep"], bool) and
               first_trial["window"].shape == (8, 750) and
@@ -1910,9 +2782,9 @@ def layer5():
         indicators = rejected_report["trial_rejection_indicators"]
         check("rejected NPZ names exact rejecting steps and responsible channels",
               indicators[0]["indicator"] == "REJECT" and
-              indicators[0]["channel_failures"]["flat"] == ["FC3"] and
+              indicators[0]["channel_failures"]["flat"] == ["F3"] and
               indicators[1]["indicator"] == "REJECT" and
-              indicators[1]["channel_failures"]["amplitude"] == ["FC4"] and
+              indicators[1]["channel_failures"]["amplitude"] == ["C3"] and
               rejected_report["recording_decision"]["indicator"] == "REJECT")
 
         from EEG.relabel_recording_montage import relabel

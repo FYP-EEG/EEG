@@ -231,10 +231,10 @@ def main():
                         help="resolve model from this runtime profile user")
     parser.add_argument("--intents", default=None,
                         help="comma-separated intents used with --user")
-    parser.add_argument("--amp-uv", type=float, default=400.0,
-                        help="gross-amplitude screening threshold")
-    parser.add_argument("--jump-uv", type=float, default=75.0,
-                        help="sample-to-sample jump threshold")
+    parser.add_argument("--amp-uv", type=float, default=None,
+                        help="optional explicit cap; default uses adaptive scaling")
+    parser.add_argument("--jump-uv", type=float, default=None,
+                        help="optional explicit cap; default uses adaptive scaling")
     parser.add_argument("--flat-uv", type=float, default=.05,
                         help="per-channel standard-deviation floor")
     parser.add_argument("--z-max", type=float, default=4.0,

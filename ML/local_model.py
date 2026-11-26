@@ -154,10 +154,9 @@ class LocalMIModel:
         before epoching, so the pipeline has no filter of its own, and EDF data
         is in volts while the board streams uV.
 
-        Channel order needs no remapping any more. The notebook picks
-        FC3 FC4 C3 CZ C4 CP3 CP4 PZ, and `cyton8_motor` - the montage this
-        project now records with - is exactly that list, so the starter model
-        and live recordings sit on the same electrodes.
+        The current notebook/data importer must use the project's active
+        `cyton8_motor` order: F3 C3 CZ P3 PZ F4 C4 P4. Exported models are
+        expected to follow that same order.
         """
         import joblib
         obj = joblib.load(path)

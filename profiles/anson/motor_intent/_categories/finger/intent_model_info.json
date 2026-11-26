@@ -1,0 +1,106 @@
+{
+  "kind": "MotorIntentModel",
+  "version": 2,
+  "pipeline": "riemann_svm",
+  "intents": [
+    "left_thumb",
+    "left_index",
+    "left_middle",
+    "left_ring",
+    "left_pinky",
+    "right_thumb",
+    "right_index",
+    "right_middle",
+    "right_ring",
+    "right_pinky"
+  ],
+  "model_scope": "personal-category",
+  "category": "finger",
+  "pretrained_from": null,
+  "class_map": {
+    "0": "left_thumb",
+    "1": "left_index",
+    "2": "left_middle",
+    "3": "left_ring",
+    "4": "left_pinky",
+    "5": "right_thumb",
+    "6": "right_index",
+    "7": "right_middle",
+    "8": "right_ring",
+    "9": "right_pinky",
+    "10": "idle"
+  },
+  "has_idle": true,
+  "sample_freq": 250,
+  "montage": "cyton8_motor",
+  "confidence_threshold": 0.55,
+  "n_trials": 95,
+  "n_sessions": 1,
+  "cv_accuracy": null,
+  "cv_reliable": false,
+  "chance_accuracy": 0.09090909090909091,
+  "all_scores": {},
+  "assessment": {
+    "intents": [
+      "left_thumb",
+      "left_index",
+      "left_middle",
+      "left_ring",
+      "left_pinky",
+      "right_thumb",
+      "right_index",
+      "right_middle",
+      "right_ring",
+      "right_pinky"
+    ],
+    "count": 10,
+    "finger_count": 10,
+    "difficulty": "RESEARCH_ONLY",
+    "adjacent_pairs": [
+      [
+        "left_thumb",
+        "left_index"
+      ],
+      [
+        "left_index",
+        "left_middle"
+      ],
+      [
+        "left_middle",
+        "left_ring"
+      ],
+      [
+        "left_ring",
+        "left_pinky"
+      ],
+      [
+        "right_thumb",
+        "right_index"
+      ],
+      [
+        "right_index",
+        "right_middle"
+      ],
+      [
+        "right_middle",
+        "right_ring"
+      ],
+      [
+        "right_ring",
+        "right_pinky"
+      ]
+    ],
+    "warnings": [
+      "adjacent same-hand fingers have strongly overlapping cortical representations: left_thumb/left_index, left_index/left_middle, left_middle/left_ring, left_ring/left_pinky, right_thumb/right_index, right_index/right_middle, right_middle/right_ring, right_ring/right_pinky",
+      "10 finger classes is an advanced fine-MI task; accuracy normally falls as similar classes are added",
+      "6-10 finger control is research-only for low-density scalp EEG; software support does not guarantee neurological separability",
+      "5 classes use the left hand; consider spreading commands across both hands when the application permits",
+      "5 classes use the right hand; consider spreading commands across both hands when the application permits"
+    ],
+    "task_set": "all-10-fingers-d33dc71c"
+  },
+  "trained_at": "2026-11-26T10:10:26",
+  "recordings": [
+    "general/calib_anson_20261126_101019.npz"
+  ]
+}

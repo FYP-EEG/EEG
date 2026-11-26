@@ -23,7 +23,7 @@ from pathlib import Path
 
 from ML.bci_engine import BCIEngine
 from stream_bridge import (StreamBridge, SyntheticBackend, ReplayBackend,
-                           BrainFlowBackend)
+                           OpenBCICSVBackend, BrainFlowBackend)
 
 from .errors import CalibrationError, HardwareError
 
@@ -60,9 +60,10 @@ class BCISession:
                  target_freqs=(15.0, 20.0), sample_freq=250, mode="SSVEP",
                  window=750, hop=250, debounce=3, confidence_threshold=0.15,
                  serial_port="COM4", board_id=0, replay_npz=None,
-                 fallback_to_sim=True, model=None):
+                 eeg_csv=None, fallback_to_sim=True, model=None):
         """
-        :param source: 'sim' | 'replay' | 'hardware'
+        :param source: 'sim' | 'replay' | 'csv' | 'hardware'
+        :param eeg_csv: OpenBCI GUI CSV used when ``source='csv'``.
         :param profile: path to a calibration profile json (Step 3). Overrides
                         target_freqs / threshold / montage with fitted values.
         :param fallback_to_sim: if hardware is unavailable, silently use synthetic
@@ -116,7 +117,7 @@ class BCISession:
             self._load_model(model)
 
         backend = self._make_backend(source, serial_port, board_id, replay_npz,
-                                     fallback_to_sim)
+                                     eeg_csv, fallback_to_sim)
         self.bridge = StreamBridge(backend=backend, window=window, hop=hop)
 
     # ---------------------------------------------------------------- model
@@ -167,7 +168,8 @@ class BCISession:
         return trained
 
     # ------------------------------------------------------------- backends
-    def _make_backend(self, source, serial_port, board_id, replay_npz, fallback):
+    def _make_backend(self, source, serial_port, board_id, replay_npz, eeg_csv,
+                      fallback):
         if source == "hardware":
             try:
                 be = BrainFlowBackend(board_id=board_id, serial_port=serial_port)
@@ -197,6 +199,15 @@ class BCISession:
                 self.source = "sim (no recording found)"
                 return SyntheticBackend(seed=1, target_freqs=self.target_freqs)
             return ReplayBackend(hits[-1], loop=True)
+
+        if source in {"csv", "openbci_csv"}:
+            if not eeg_csv:
+                raise CalibrationError(
+                    "source='csv' requires eeg_csv='path/to/OpenBCI-GUI.csv'")
+            try:
+                return OpenBCICSVBackend(eeg_csv, loop=True)
+            except (FileNotFoundError, ValueError) as exc:
+                raise CalibrationError(f"Could not load OpenBCI GUI CSV: {exc}") from exc
 
         return SyntheticBackend(seed=1, target_freqs=self.target_freqs)
 

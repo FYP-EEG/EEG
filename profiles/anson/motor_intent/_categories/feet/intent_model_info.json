@@ -1,0 +1,42 @@
+{
+  "kind": "MotorIntentModel",
+  "version": 2,
+  "pipeline": "riemann_svm",
+  "intents": [
+    "both_feet"
+  ],
+  "model_scope": "personal-category",
+  "category": "feet",
+  "pretrained_from": null,
+  "class_map": {
+    "0": "both_feet",
+    "1": "idle"
+  },
+  "has_idle": true,
+  "sample_freq": 250,
+  "montage": "cyton8_motor",
+  "confidence_threshold": 0.55,
+  "n_trials": 23,
+  "n_sessions": 1,
+  "cv_accuracy": null,
+  "cv_reliable": false,
+  "chance_accuracy": 0.5,
+  "all_scores": {},
+  "assessment": {
+    "intents": [
+      "both_feet"
+    ],
+    "count": 1,
+    "finger_count": 0,
+    "difficulty": "BASIC",
+    "adjacent_pairs": [],
+    "warnings": [
+      "one-intent control requires recorded idle trials so the model can distinguish the command from no action"
+    ],
+    "task_set": "both_feet-b757511a"
+  },
+  "trained_at": "2026-11-26T10:10:26",
+  "recordings": [
+    "general/calib_anson_20261126_101019.npz"
+  ]
+}

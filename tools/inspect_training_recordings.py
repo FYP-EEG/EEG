@@ -3,6 +3,10 @@ Author: Anson
 Created on: 12/11/2026
 Purpose: visualize multiple recorded NPZ sessions and assess training readiness.
 
+Edited by Anson
+Date: 18/11/2026
+Purpose: show recording, screening-step, per-trial and per-channel rejection indicators.
+
 Example:
     python tools/inspect_training_recordings.py \
       --input "dataset/motor_intent/calib_brian_*.npz" \
@@ -143,6 +147,30 @@ def _diagnostic_rows(rows):
     return "".join(output)
 
 
+def _rejection_step_rows(steps):
+    return "".join(
+        f"<tr><td>{row['step']}</td><td>{html.escape(row['reason'])}</td>"
+        f"<td>{html.escape(row['rule'])}</td><td>{row['failed_trials']}</td>"
+        f"<td><b>{row['indicator']}</b></td></tr>"
+        for row in steps)
+
+
+def _trial_indicator_rows(rows):
+    rejected = [row for row in rows if not row.get("accepted")]
+    shown = rejected if rejected else rows[:20]
+    output = []
+    for row in shown:
+        channels = "; ".join(
+            f"{reason}: {','.join(labels)}"
+            for reason, labels in row.get("channel_failures", {}).items())
+        output.append(
+            f"<tr><td>{row['trial']}</td><td>{html.escape(row['label'])}</td>"
+            f"<td><b>{row['indicator']}</b></td>"
+            f"<td>{html.escape(', '.join(row.get('rejected_by', [])) or 'none')}</td>"
+            f"<td>{html.escape(channels or 'n/a')}</td></tr>")
+    return "".join(output)
+
+
 def inspect_file(path, screening_kw, labels_override=None, min_per_class=8):
     try:
         monitor = TrainingDataPerformance([path], screening_kw=screening_kw)
@@ -168,6 +196,17 @@ def inspect_file(path, screening_kw, labels_override=None, min_per_class=8):
             for name in monitor.class_names}
 
     report = monitor.report()
+    with np.load(path, allow_pickle=False) as saved_data:
+        if "acquisition_json" in saved_data.files:
+            try:
+                report["acquisition"] = json.loads(str(np.asarray(
+                    saved_data["acquisition_json"]).item()))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                report["acquisition"] = {
+                    "route": "unreadable", "backend": "unknown"}
+    if not report.get("acquisition"):
+        report["acquisition"] = {
+            "route": "legacy_unspecified", "backend": "unknown"}
     if "channel_labels" not in report:
         with np.load(path, allow_pickle=True) as data:
             saved = (np.asarray(data["channel_labels"]).astype(str).tolist()
@@ -187,11 +226,63 @@ def inspect_file(path, screening_kw, labels_override=None, min_per_class=8):
             name: int(np.asarray(mask, dtype=bool).sum())
             for name, mask in monitor.screening["reasons"].items()}
     report.setdefault("screening_thresholds", dict(screening_kw))
+    if "rejection_steps" not in report:
+        rules = {
+            "amplitude": (f"centred peak > explicit {screening_kw['amp_uv']} µV"
+                          if screening_kw["amp_uv"] is not None else
+                          "adaptive robust amplitude/peer/clipping limit"),
+            "flat": f"channel SD < {screening_kw['flat_uv']} µV",
+            "jump": (f"sample jump > explicit {screening_kw['jump_uv']} µV"
+                     if screening_kw["jump_uv"] is not None else
+                     "adaptive robust sample-jump/peer limit"),
+            "outlier": f"within-class robust z > {screening_kw['z_max']}",
+            "noncompliant": "cue/trial marked noncompliant",
+        }
+        report["rejection_steps"] = [
+            {"step": index, "reason": reason, "rule": rules[reason],
+             "failed_trials": report["drop_reason_counts"].get(reason, 0),
+             "passed_trials": report["trials"] - report["drop_reason_counts"].get(reason, 0),
+             "indicator": ("REJECTS" if report["drop_reason_counts"].get(reason, 0)
+                           else "PASS")}
+            for index, reason in enumerate(rules, start=1)]
+    report.setdefault("trial_rejection_indicators", [
+        {"trial": index + 1, "label": str(monitor.labels[index]),
+         "indicator": "ACCEPT" if monitor.keep[index] else "REJECT",
+         "accepted": bool(monitor.keep[index]),
+         "rejected_by": list(monitor.drop_reasons[index]),
+         "channel_failures": {}}
+        for index in range(len(monitor.X))])
+    report.setdefault("recording_decision", {
+        "indicator": ("ACCEPT" if report["kept"] > 0 and report["drop_rate"] <= .33
+                      else "REJECT"),
+        "accepted": bool(report["kept"] > 0 and report["drop_rate"] <= .33),
+        "rule": "at least one retained trial and no more than 33% rejected",
+        "drop_rate": report["drop_rate"],
+        "first_rejecting_step": next(
+            (row["reason"] for row in report["rejection_steps"]
+             if row["failed_trials"]), None),
+    })
     if "channel_diagnostics" not in report:
-        centred = monitor.X - monitor.X.mean(axis=2, keepdims=True)
-        peaks = np.max(np.abs(centred), axis=2)
-        stds = np.std(monitor.X, axis=2)
-        jumps = np.max(np.abs(np.diff(monitor.X, axis=2)), axis=2)
+        metrics = monitor.screening.get("metrics", {})
+        centred = monitor.X - np.median(monitor.X, axis=2, keepdims=True)
+        peaks = np.asarray(metrics.get(
+            "peak_uv", np.max(np.abs(centred), axis=2)), dtype=float)
+        stds = np.asarray(metrics.get(
+            "std_uv", np.std(monitor.X, axis=2)), dtype=float)
+        jumps = np.asarray(metrics.get(
+            "jump_uv", np.max(np.abs(np.diff(monitor.X, axis=2)), axis=2)),
+            dtype=float)
+        channel_reasons = monitor.screening.get("channel_reasons", {})
+        amp_mask = np.asarray(channel_reasons.get(
+            "amplitude", (peaks > float(screening_kw["amp_uv"])
+                          if screening_kw["amp_uv"] is not None else
+                          np.zeros_like(peaks, dtype=bool))), dtype=bool)
+        flat_mask = np.asarray(channel_reasons.get(
+            "flat", stds < screening_kw["flat_uv"]), dtype=bool)
+        jump_mask = np.asarray(channel_reasons.get(
+            "jump", (jumps > float(screening_kw["jump_uv"])
+                     if screening_kw["jump_uv"] is not None else
+                     np.zeros_like(jumps, dtype=bool))), dtype=bool)
         report["channel_diagnostics"] = []
         for channel, label in enumerate(report["channel_labels"]):
             peak, std, jump = peaks[:, channel], stds[:, channel], jumps[:, channel]
@@ -200,15 +291,15 @@ def inspect_file(path, screening_kw, labels_override=None, min_per_class=8):
                 "peak_median_uv": float(np.median(peak)),
                 "peak_p95_uv": float(np.percentile(peak, 95)),
                 "peak_max_uv": float(np.max(peak)),
-                "amplitude_fail_trials": int((peak > screening_kw["amp_uv"]).sum()),
+                "amplitude_fail_trials": int(amp_mask[:, channel].sum()),
                 "std_median_uv": float(np.median(std)),
                 "std_min_uv": float(np.min(std)),
                 "std_max_uv": float(np.max(std)),
-                "flat_fail_trials": int((std < screening_kw["flat_uv"]).sum()),
+                "flat_fail_trials": int(flat_mask[:, channel].sum()),
                 "jump_median_uv": float(np.median(jump)),
                 "jump_p95_uv": float(np.percentile(jump, 95)),
                 "jump_max_uv": float(np.max(jump)),
-                "jump_fail_trials": int((jump > screening_kw["jump_uv"]).sum()),
+                "jump_fail_trials": int(jump_mask[:, channel].sum()),
             })
         report["trial_signal_metrics"] = {
             "peak_median_uv": float(np.median(np.max(peaks, axis=1))),
@@ -238,6 +329,18 @@ def build_html(results, output):
         missing = assessment["missing_universal_labels"]
         missing_text = (", ".join(value.replace("intent::", "") for value in missing)
                         if missing else "none")
+        amp_value = report["screening_thresholds"].get("amp_uv")
+        jump_value = report["screening_thresholds"].get("jump_uv")
+        amplitude_text = (f"explicit {amp_value} µV plus adaptive limits"
+                          if amp_value is not None else
+                          "adaptive robust/peer/clipping limits")
+        jump_text = (f"explicit {jump_value} µV/sample plus adaptive limits"
+                     if jump_value is not None else
+                     "adaptive robust/peer limits")
+        acquisition = report.get("acquisition") or {}
+        acquisition_route = str(acquisition.get("route", "legacy_unspecified"))
+        acquisition_backend = str(acquisition.get("backend", "unknown"))
+        acquisition_json = json.dumps(acquisition, indent=2, sort_keys=True)
         cards.append(f"""
 <section class="card">
   <h2>{html.escape(path.name)}</h2>
@@ -249,13 +352,24 @@ def build_html(results, output):
     <div><b>Subject</b><br>{html.escape(', '.join(report['subjects']))}</div>
     <div><b>Montage</b><br>{html.escape(report['montage'])}</div>
     <div><b>Channels</b><br>{html.escape(', '.join(report['channel_labels']))}</div>
+    <div><b>Acquisition route</b><br>{html.escape(acquisition_route)}</div>
+    <div><b>Backend</b><br>{html.escape(acquisition_backend)}</div>
   </div>
+  <details><summary>Acquisition provenance</summary><pre>{html.escape(acquisition_json)}</pre></details>
   <p><b>Drop reasons:</b> {html.escape(reason_text)}</p>
+  <p><b>Recording screening decision:</b> {report['recording_decision']['indicator']} — {html.escape(report['recording_decision']['rule'])}</p>
   <p><b>Missing universal labels:</b> {html.escape(missing_text)}</p>
+  <h3>Rejection pipeline indicators</h3>
+  <table><thead><tr><th>Step</th><th>Rejector</th><th>Rule</th><th>Failed trials</th><th>Indicator</th></tr></thead>
+  <tbody>{_rejection_step_rows(report['rejection_steps'])}</tbody></table>
+  <h3>Per-trial rejection indicators</h3>
+  <p>Rejected trials are listed with the exact rejecting step and responsible channels. If none were rejected, up to 20 accepted trials are shown.</p>
+  <table><thead><tr><th>Trial</th><th>Label</th><th>Indicator</th><th>Rejected by</th><th>Channel attribution</th></tr></thead>
+  <tbody>{_trial_indicator_rows(report['trial_rejection_indicators'])}</tbody></table>
   <table><thead><tr><th>Class</th><th>Retained/recorded</th><th>Recorded count</th></tr></thead>
   <tbody>{_bar_rows(report['class_counts'], report['retained_counts'])}</tbody></table>
   <h3>Per-channel rejection attribution</h3>
-  <p>Peak threshold {report['screening_thresholds'].get('amp_uv', 400)} µV · flat threshold {report['screening_thresholds'].get('flat_uv', .05)} µV SD · jump threshold {report['screening_thresholds'].get('jump_uv', 75)} µV/sample</p>
+  <p>Amplitude: {amplitude_text} · flat threshold {report['screening_thresholds'].get('flat_uv', .05)} µV SD · jumps: {jump_text}</p>
   <table><thead><tr><th>#</th><th>Channel</th><th>Peak median / p95 / max µV</th><th>Amp fails</th><th>SD median / min µV</th><th>Flat fails</th><th>Jump median / p95 / max µV</th><th>Jump fails</th></tr></thead>
   <tbody>{_diagnostic_rows(report['channel_diagnostics'])}</tbody></table>
   <h3>Representative {'retained' if report['kept'] else 'rejected'} epoch</h3>
@@ -299,8 +413,10 @@ def main():
     parser.add_argument("--channel-labels", default=None,
                         help="visual/report override, comma-separated; does not edit NPZ")
     parser.add_argument("--min-per-class", type=int, default=8)
-    parser.add_argument("--amp-uv", type=float, default=400.0)
-    parser.add_argument("--jump-uv", type=float, default=75.0)
+    parser.add_argument("--amp-uv", type=float, default=None,
+                        help="optional explicit cap; default uses adaptive scaling")
+    parser.add_argument("--jump-uv", type=float, default=None,
+                        help="optional explicit cap; default uses adaptive scaling")
     parser.add_argument("--flat-uv", type=float, default=.05)
     parser.add_argument("--z-max", type=float, default=4.0)
     parser.add_argument("--open", action="store_true", help="open HTML in browser")
@@ -340,6 +456,10 @@ def main():
             print(f"  amplitude offenders={amp_bad or 'none'}")
             print(f"  flat offenders={flat_bad or 'none'}")
             print(f"  jump offenders={jump_bad or 'none'}")
+            print("  rejection steps=" + ", ".join(
+                f"{row['reason']}:{row['failed_trials']}[{row['indicator']}]"
+                for row in report["rejection_steps"]))
+            print(f"  recording indicator={report['recording_decision']['indicator']}")
             print(f"  {assessment['verdict']}\n")
         except Exception as exc:
             print(f"{path}: ERROR {type(exc).__name__}: {exc}")

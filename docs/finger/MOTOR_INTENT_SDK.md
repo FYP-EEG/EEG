@@ -19,30 +19,23 @@ left_index -> rock
 both_feet  -> jump
 ```
 
-Runtime models and in-app personal calibration are stored by user and unordered task set:
-
-```text
-profiles/<user>/motor_intent/<task-set>/
-    calib_*.npz                 # in-app personal calibration only
-    intent_model.joblib
-    intent_model_info.json
-```
-
-Standalone `EEG/data_record.py` sessions are generalized training data, not profiles:
+One universal recording is stored as subject-labelled training data:
 
 ```text
 dataset/motor_intent/calib_<subject>_<timestamp>.npz
 ```
 
-Each generalized NPZ still contains subject, session, montage, sampling-rate and label metadata so grouped evaluation remains possible.
-
-Changing action names without changing the motor-intent set does not require retraining. Adding/removing an intention creates a different exact task set. Runtime first seeks that exact personal model, then a compatible personal `finger`, `hand`, `upper_limb`, or `feet` specialist at:
+It is automatically filtered into independent personal classifiers:
 
 ```text
-profiles/<user>/motor_intent/_categories/<category>/intent_model.joblib
+profiles/<user>/motor_intent/_categories/finger/intent_model.joblib
+profiles/<user>/motor_intent/_categories/hand/intent_model.joblib
+profiles/<user>/motor_intent/_categories/feet/intent_model.joblib
 ```
 
-The specialist must cover every intention requested by the game. A public benchmark is never loaded directly as personal calibration, and a mixed/all-body model is not used as a silent fallback. Dataset imports and optional EEGConformer/TCFormer pretraining are documented in `PUBLIC_MI_DATASETS.md`.
+Games select models from their action-to-intent map. Rock–Paper–Scissors and Realistic UI load the finger model. Subway Runner loads both hand and feet models through a category router. An output not mapped by the active game is suppressed as no action. Exact task-set models remain only as an in-app-calibration fallback if category models have not yet been generated.
+
+Each NPZ retains subject, session, montage, sampling-rate and label metadata. Personal category training filters to the requested subject, so another participant's universal recording is never mixed into the model. A public benchmark is never loaded directly as personal calibration. Dataset imports and optional EEGConformer/TCFormer pretraining are documented in `PUBLIC_MI_DATASETS.md`.
 
 ## Universal reusable body-intent recording
 
@@ -52,10 +45,10 @@ assets; the cued finger, whole hand, or both feet change colour while the real b
 remains still.
 
 ```bash
-python EEG/data_record.py --intent-mi --subject anson \
-  --trials-per-intent 8 --universal-idle 15 --cue 4 --rest 2 \
-  --board-id 0 --serial-port COM4
+python EEG/data_record.py --universal anson
 ```
+
+This short command uses the current defaults: direct Cyton on COM8, ThinkPulse gain 8, `cyton8_motor`, eight trials per active intention, 15 idle trials, and automatic finger/hand/feet model training. Override individual options only when the hardware or protocol actually changes.
 
 This records 13 active intentions x 8 trials plus 15 idle trials (119 total) into:
 
@@ -63,31 +56,79 @@ This records 13 active intentions x 8 trials plus 15 idle trials (119 total) int
 dataset/motor_intent/calib_anson_*.npz
 ```
 
-The universal recording is a reusable labelled data pool, not one forced 14-class
-runtime model. Each application trains a smaller task-specific model by filtering the
-intentions it needs. App-specific calibration blocks are combined with the reusable
-pool automatically.
+The universal recording is a reusable labelled data pool, not one forced 14-class runtime model. It is split into finger, hand and feet specialists. A game loads only its required specialist, or a router over multiple specialists when its actions cross categories.
 
 Running the same command with `--dry-run` writes only under `dry_runs/` and prints a
 warning not to train from synthetic data.
 
 Before every real direct-Cyton MI recording, `data_record.py` calls the mandatory gate in `startup/check_headband.py` before loading the app or starting any cue:
 
-1. require explicit confirmation that SRB/reference, BIAS and all eight leads are firmly attached (software cannot physically inspect a connector);
+1. state the selected electrode mode's physical wiring contract without asking for typed confirmation (passive SRB/reference plus BIAS, or powered ThinkPulse with one earlobe reference on SRB2 and the physical BIAS lead disconnected); software records that this wiring is not machine-verifiable;
 2. transfer internal ground on all 8 channels;
 3. transfer the known approximately 2 Hz square wave on all 8 channels;
-4. restore Cyton defaults with `d`, which returns every channel to Normal input and powers default channels on;
-5. capture normal electrodes and require all 8 channels to pass sample-rate, finite, flatness, amplitude and sample-jump checks;
-6. save startup HTML/JSON under `reports/startup/<subject>/` and block recording if any stage fails.
+4. restore Cyton defaults with `d`, then apply the selected all-channel Normal-input profile;
+5. capture live electrodes and require all 8 channels to pass sample-rate, finite, flatness, signal-adaptive amplitude/jump and clipping checks;
+6. if any stage fails, block recording/cues while keeping the recorder and hosted example alive; print each distinct root failure once and replace one in-place `Silent repeated failures: N` counter for identical polls; write one startup HTML/JSON only after the valid session reaches `READY`.
 
 Run the same gate independently before non-recorder headset use:
 
 ```bash
 python startup/check_headband.py --port COM8 --montage cyton8_motor \
-  --confirm-srb-bias --out reports/startup/headband_pre_use
+  --out reports/startup/headband_pre_use
 ```
 
-After startup, `data_record.py` opens the actual recording backend and repeats a fresh still-baseline preflight, saving HTML/JSON under `reports/recording_quality/<subject>/`. `--force-record` can continue after that live signal check for deliberate debugging, but it cannot bypass a failed all-channel startup gate.
+A failed startup check does not return from `data_record.py` or terminate an example hosted by it. The terminal prints a distinct root failure and corrective actions once; identical failures replace one in-place counter line rather than printing repeatedly. If Cyton is disconnected/no samples arrive, dependent square-wave and Normal-input stages are `SKIP`, not extra failures. For known ASCII Cyton commands, the shared command helper tolerates only BrainFlow's optional response-text `UnicodeDecodeError` (for example a raw standalone `A0`, which is not valid UTF-8) after native command success; actual success is then established from captured ground/square/Normal samples. Other command and hardware exceptions still block startup. BrainFlow 5.22.0 or newer remains required. `--startup-retry-delay` changes the polling interval, and `Ctrl+C` remains the deliberate operator-abort path. Failed polls write no reports.
+
+After startup, `data_record.py` opens the actual recording backend and repeats a fresh still-baseline preflight. Connection or signal failure also leaves the recorder/example alive; identical failures update one in-place counter, while a new diagnostic block is printed only if the failure changes. HTML/JSON under `reports/recording_quality/<subject>/` is written only for the preflight that proceeds into a valid recording session (or an explicitly forced debugging session). `--force-record` cannot bypass a failed all-channel startup gate.
+
+OpenBCI ThinkPulse active electrodes must use `--electrode-mode thinkpulse` (default gain 8, or explicitly `--cyton-gain 8`). In that mode both startup and the recording backend power all channels in Normal input, disable BIAS generation, keep SRB2 on/SRB1 off, and reapply the same profile after the normal-default reset. Connect one earlobe reference to SRB2. The physical BIAS lead—including a second earlobe lead formerly used as BIAS—must remain disconnected. Startup states this contract but does not ask for `YES` or claim that software inspected the wiring. Passive electrodes retain gain 24 and physical BIAS by default. ThinkPulse gains above 8 are rejected. If all eight channels show actual clipping/railing, startup automatically retries at 4, then 2 and 1, and passes the selected gain into the recording backend.
+
+The `cyton8_motor` physical order is `F3, C3, Cz, P3, Pz, F4, C4, P4` for Cyton channels 1–8. This is the only motor montage used by the current universal/category-model workflow.
+
+### Adaptive amplitude handling and apparent flatness
+
+Startup and offline trial screening no longer assume a fixed default amplitude/jump cap. They derive robust per-channel scale and sample-step limits from the recording, compare each channel with its peers, and separately detect repeated extreme plateaus. Stable common amplification and stable DC offsets can pass; a gross local scale outlier, abrupt step, flat channel or clipped plateau fails. An explicit cap remains available only for a controlled diagnostic experiment.
+
+An OpenBCI GUI trace that is outside its display range can appear flat in this code for two different reasons:
+
+1. the value is a large but stable DC offset, and median-centring/high-pass filtering intentionally removes that offset while retaining its variation; or
+2. the ADC is saturated, so many consecutive raw samples equal one extreme. Once centred or filtered, that plateau has almost no variation.
+
+The report therefore shows the raw median, peak around the median, adaptive limit, standard deviation and repeated-extreme fraction. It does not “fix” railing by clipping or normalizing the data.
+
+### OpenBCI GUI CSV offline input
+
+Use a GUI export to check acquisition-consuming scripts without a board:
+
+```bash
+python EEG/data_record.py --universal anson \
+  --eeg-csv "path/OpenBCI-RAW.csv" --no-auto-train
+```
+
+The parser recognizes `%` metadata, sample rate (or infers it from numeric timestamps), and named `EXG Channel 0` through `EXG Channel 7` columns even when accelerometer/analog columns move. Replay loops at wall-clock rate and undergoes the same adaptive preflight. The resulting NPZ is marked as an offline pipeline check and is excluded from automatic category-model training because replayed EEG is not related to the new cue times.
+
+Other scripts can use:
+
+```python
+import bci_sdk
+from bci_sdk import OpenBCICSVBackend
+
+backend = OpenBCICSVBackend("path/OpenBCI-RAW.csv", loop=True)
+
+# Or through the high-level SDK:
+session = bci_sdk.BCISession(source="csv", eeg_csv="path/OpenBCI-RAW.csv")
+```
+
+A standalone CSV preflight is also available:
+
+```bash
+python EEG/signal_preflight.py --csv "path/OpenBCI-RAW.csv" \
+  --out reports/signal_preflight/openbci
+```
+
+```bash
+python EEG/data_record.py --universal anson
+```
 
 After the NPZ is saved, the inspection HTML/JSON contains a recording `ACCEPT`/`REJECT` indicator, ordered rejection-step indicators (amplitude, flatness, jump, within-class outlier and noncompliance), and a per-trial table naming both the rejecting rules and responsible channels. This makes a rejection traceable instead of reporting only one aggregate dropped-trial count.
 
@@ -112,8 +153,7 @@ The Calibration page provides the complete local flow:
 Launch a real calibration directly inside RPS:
 
 ```bash
-python example/rockpaperscissors.py --user anson --port COM4 \
-  --calibration-source cyton
+python example/rockpaperscissors.py --user anson --calibration-source cyton
 ```
 
 Use F2, then Enter. The tab stops a running BCI before opening the board and, after successful real training, can restart `intent-mi`. A dry run checks only timing/UI and deliberately saves no EEG model. One block trains a usable experimental model but cannot produce a trustworthy session-held-out score; record at least three separate blocks. During training, the loader combines the selected app-specific profile calibration with matching labels from the generalized `dataset/motor_intent/` pool. Legacy `_universal_13` profile recordings remain readable.
@@ -126,7 +166,7 @@ Subway:       36 action + 12 idle (12 per action)
 Realistic UI: 60 action + 12 idle (12 per action)
 ```
 
-The external `EEG/data_record.py --intent-mi` workflow remains available for lab scripting and reproducible command-line sessions.
+The external universal workflow is the primary recording path: `python EEG/data_record.py --universal <subject>`.
 
 ### Raw versus filtered storage
 
@@ -159,32 +199,16 @@ right_index -> paper
 right_pinky -> scissors
 ```
 
-Record three separate sessions:
+This game selects the personal **finger** model produced by the universal recording.
 
 ```bash
-python EEG/data_record.py --file rockpaperscissors --intent-mi \
-  --subject anson --trials 90 --idle-trials 15 --cue 4 --rest 2 \
-  --board-id 0 --serial-port COM4
+python example/rockpaperscissors.py --bci intent-mi --user anson
 ```
 
-Train:
+Override the action mapping while retaining the same finger model:
 
 ```bash
-python ML/train_intent_mi.py anson \
-  --intents left_index,right_index,right_pinky
-```
-
-Play:
-
-```bash
-python example/rockpaperscissors.py \
-  --bci intent-mi --user anson --port COM4
-```
-
-Override actions while retaining the same trained task set:
-
-```bash
-python example/rockpaperscissors.py --bci intent-mi --user anson --port COM4 \
+python example/rockpaperscissors.py --bci intent-mi --user anson \
   --intent-map "rock=right_pinky,paper=left_index,scissors=right_index"
 ```
 
@@ -198,25 +222,10 @@ right_hand -> move_right
 both_feet  -> jump
 ```
 
-Record:
+This game loads the personal **hand** and **feet** models and routes the highest accepted category prediction.
 
 ```bash
-python EEG/data_record.py --file subway_run --intent-mi \
-  --subject anson --trials 90 --idle-trials 15 --cue 4 --rest 2 \
-  --board-id 0 --serial-port COM4
-```
-
-Train:
-
-```bash
-python ML/train_intent_mi.py anson \
-  --intents left_hand,right_hand,both_feet
-```
-
-Play:
-
-```bash
-python example/subway_run.py --bci intent-mi --user anson --port COM4
+python example/subway_run.py --bci intent-mi --user anson
 ```
 
 Keyboard fallback: LEFT/A, RIGHT/D, UP/W. Space is reserved for pause/resume.
@@ -233,17 +242,10 @@ right_pinky -> reload
 right_thumb -> map
 ```
 
-The SDK marks this ADVANCED and warns about the adjacent right-thumb/right-index pair.
+The SDK marks this ADVANCED and warns about the adjacent right-thumb/right-index pair. This game selects the same personal **finger** model as Rock–Paper–Scissors.
 
 ```bash
-python EEG/data_record.py --file realistic_ui --intent-mi \
-  --subject anson --trials 150 --idle-trials 20 --cue 4 --rest 2 \
-  --board-id 0 --serial-port COM4
-
-python ML/train_intent_mi.py anson \
-  --intents left_thumb,left_pinky,right_thumb,right_index,right_pinky
-
-python example/realistic_ui.py --bci intent-mi --user anson --port COM4
+python example/realistic_ui.py --bci intent-mi --user anson
 ```
 
 ## Gameplay feedback and separate performance monitor
@@ -336,22 +338,6 @@ python example/performance_monitor.py \
 
 Training mode shows label counts, retained/dropped trials, aggregate screening reasons, the selected 8-channel epoch and optional model predictions. It reads `channel_labels` from each NPZ instead of assuming the motor montage. Left/Right changes trial and K toggles kept-only view. Model metrics in this view use training recordings and are not held-session or held-subject validation.
 
-For the lab order `Fp1,Fp2,O1,Oz,O2,PO3,PO4,Pz`, record future sessions with:
-
-```bash
-python EEG/data_record.py ... --montage cyton8_fp_occipital
-```
-
-Correct old metadata without changing EEG samples:
-
-```bash
-python EEG/relabel_recording_montage.py \
-  --input "dataset/motor_intent/calib_brian_*.npz" \
-  --montage cyton8_fp_occipital
-```
-
-The default writes corrected copies under `dataset/motor_intent/montage_fixed/`, preventing a wildcard from mixing old and corrected metadata. Review them before optionally using `--in-place`, which keeps `.original.npz` backups. This montage contains no C3/C4/Cz sensorimotor sites and therefore should not be presented as a validated finger-MI montage.
-
 ## Public Python API
 
 ```python
@@ -367,8 +353,7 @@ bci = bci_sdk.LiveBCI(
     buttons,
     source="intent-mi",
     user="anson",
-    serial_port="COM4",
-    intent_map=mapping,
+    intent_map=mapping,  # COM8 + ThinkPulse are current defaults
     on_select=lambda button: button.click(),
 ).start()
 
@@ -385,7 +370,7 @@ right_index -> fire
 idle        -> no action (internal class)
 ```
 
-`data_record.py --intent-mi` includes ten idle trials by default. Increase this for a reliable false-activation estimate.
+`data_record.py --universal <subject>` includes 15 idle trials by default. Increase `--universal-idle` when a larger no-action sample is needed.
 
 ## Difficulty levels
 

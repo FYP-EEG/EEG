@@ -28,6 +28,11 @@ Date: 18/11/2026
 Purpose: run the mandatory all-channel Cyton startup gate before any real MI
          recording and print explicit post-save NPZ rejection indicators.
 
+Edited by Anson
+Date: 16/08/2026
+Purpose: keep the recorder/hosted example alive after failed startup or live
+         preflight checks and retry until the hardware is fixed.
+
 MODES
 -----
 1. Character mode (original, unchanged) - flashes typed/random characters:
@@ -53,6 +58,10 @@ MODES
 6. App-specific intent calibration (combined with the universal pool at train time):
        py EEG/data_record.py --file rockpaperscissors --intent-mi \
             --subject anson --trials 36 --idle-trials 12 --cue 4
+
+7. Offline acquisition-path check with an OpenBCI GUI CSV (never auto-trained):
+       py EEG/data_record.py --universal anson \
+            --eeg-csv OpenBCI-RAW.csv --no-auto-train
 
 WHY CUED RECORDING
 ------------------
@@ -81,10 +90,10 @@ import argparse
 import csv
 import datetime as dt
 import random
-import threading
-import time
 import string
 import sys
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -181,15 +190,17 @@ def _load_button_label_fn():
 
 
 def save_session(X, y, labels, subject, fs, montage_name, out_dir,
-                 target_freqs=(0.0, 0.0)):
+                 target_freqs=(0.0, 0.0), channel_labels=None,
+                 acquisition=None):
     """Write cued-app EEG in the SAME format calibration uses."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "calrec", Path(__file__).resolve().parent / "calibration_record.py")
     calrec = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(calrec)
-    return calrec.save(X, y, labels, subject, fs, montage_name,
-                       target_freqs, out_dir)
+    return calrec.save(
+        X, y, labels, subject, fs, montage_name, target_freqs, out_dir,
+        channel_labels=channel_labels, acquisition=acquisition)
 
 
 def epoch_from_log(stream, fs, log, t0_ms, window_s=3.0):
@@ -287,6 +298,9 @@ class SessionCapture:
         info = backend.info()
         self.fs = info["fs"]
         self.n_channels = info["n_channels"]
+        self.channel_labels = list(info.get("channel_labels", []))
+        self.source = info.get("backend", "unknown")
+        self.acquisition = _acquisition_report_metadata(info)
         self._chunks = []
         self._n = 0
         self._lock = threading.Lock()
@@ -842,82 +856,190 @@ def _recording_report_root(args):
     return base / str(args.subject or "unknown").lower()
 
 
+def _acquisition_report_metadata(backend_info):
+    """Return one JSON-safe route contract for direct, GUI UDP, or CSV input."""
+    info = dict(backend_info or {})
+    backend = str(info.get("backend", "unknown"))
+    route = info.get("acquisition_route")
+    if route is None:
+        route = {
+            "openbci_gui_udp": "openbci_gui_udp",
+            "openbci_csv": "openbci_gui_csv_replay",
+            "synthetic": "synthetic",
+        }.get(backend, backend)
+    result = {
+        "route": str(route),
+        "backend": backend,
+        "fs": float(info["fs"]) if info.get("fs") is not None else None,
+        "n_channels": (int(info["n_channels"])
+                       if info.get("n_channels") is not None else None),
+        "channel_labels": list(info.get("channel_labels") or []),
+        "units": info.get("units", "uV"),
+        "filtered": info.get("filtered", False),
+    }
+    if backend == "brainflow":
+        result.update({
+            "board_id": info.get("board_id"),
+            "master_board": info.get("master_board"),
+            "descriptor_board_id": info.get("descriptor_board_id"),
+            "eeg_channel_rows": info.get("eeg_channel_rows"),
+            "package_num_row": info.get("package_num_row"),
+            "timestamp_row": info.get("timestamp_row"),
+            "board_rows": info.get("board_rows"),
+            "stream_buffer_size": info.get("stream_buffer_size"),
+            "cyton_profile": info.get("cyton_profile"),
+            "cyton_gain": info.get("cyton_gain"),
+            "electrode_mode": info.get("electrode_mode"),
+            "profile_settings": dict(info.get("profile_settings") or {}),
+        })
+    elif backend == "openbci_gui_udp":
+        result.update({
+            "bind_ip": info.get("bind_ip"),
+            "port": info.get("port"),
+            "packet_schema": info.get("packet_schema"),
+            "hardware_profile": "configured_in_openbci_gui",
+            "packet_sequence_available": False,
+        })
+    elif backend == "openbci_csv":
+        result.update({
+            "path": info.get("path"),
+            "input_unit": info.get("input_unit"),
+            "scale_to_uv": info.get("scale_to_uv"),
+            "column_schema": info.get("column_schema"),
+            "channel_numbers": list(info.get("channel_numbers") or []),
+            "sample_rate_source": info.get("sample_rate_source"),
+            "file_samples": info.get("samples"),
+            "file_duration_s": info.get("duration_s"),
+            "rows_dropped": info.get("rows_dropped"),
+            "metadata_channel_count": info.get("metadata_channel_count"),
+            "replay_loop": info.get("loop"),
+            "replay_speed": info.get("speed"),
+            "cue_alignment_valid": False,
+        })
+    return result
+
+
 def _run_required_headband_startup(args):
-    """Run the strict standalone startup gate before creating the recording UI."""
+    """Wait at the strict startup gate without terminating the recorder/example."""
     if getattr(args, "dry_run", False):
+        return True
+    if getattr(args, "eeg_csv", None):
+        print("\nOFFLINE EEG INPUT: skipping hardware startup; the OpenBCI GUI "
+              "CSV will still undergo the same adaptive raw-signal preflight.")
+        return True
+    if getattr(args, "acquisition_route", "direct") == "gui-udp":
+        print("\nGUI-OWNED ACQUISITION: the OpenBCI GUI owns the Cyton COM port. "
+              "Skipping direct board commands; the raw GUI UDP stream will "
+              "still undergo the mandatory all-channel preflight.")
         return True
     if int(getattr(args, "board_id", 0)) != 0:
         print("\nSTARTUP NOTE: the full Normal-input reset and internal-signal "
               "gate requires direct Cyton board ID 0. This non-direct backend "
               "will still undergo the mandatory live raw preflight.")
         return True
+
     port = getattr(args, "serial_port", None)
-    if not port:
-        print("Direct Cyton mode needs --serial-port COM8 (replace COM8 with "
-              "the dongle port that appears in Windows).")
-        return False
-    confirmed = bool(getattr(args, "confirm_srb_bias", False))
-    if not confirmed:
-        print("\nPHYSICAL CHECK (software cannot inspect these connectors)")
-        print("  1. SRB/reference electrode is firmly attached.")
-        print("  2. BIAS electrode is firmly attached.")
-        print("  3. All eight electrode leads are connected to the intended nodes.")
+    retry_delay = max(0.0, float(getattr(args, "startup_retry_delay", 2.0)))
+    while not port:
+        print("\nSTARTUP CHECK WAITING: direct Cyton mode needs a serial port.")
+        print("  HOW TO FIX: check Windows Device Manager for the dongle COM "
+              "number, close OpenBCI GUI/other serial programs, then enter it "
+              "here (for example COM8).")
+        print("  The recorder/example remains open. Ctrl+C aborts intentionally.")
         try:
-            confirmed = (input("Type YES to confirm these three checks: ")
-                         .strip().upper() == "YES")
+            port = input("Cyton serial port: ").strip()
         except EOFError:
-            confirmed = False
-    from startup.check_headband import run_headband_check
+            port = ""
+        if not port:
+            time.sleep(retry_delay)
+    args.serial_port = port
+
+    from startup.check_headband import wait_for_headband_ready
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     out_base = (ROOT / "reports" / "startup" /
                 str(getattr(args, "subject", None) or "unknown").lower() /
                 f"pre_record_{stamp}")
-    result = run_headband_check(
+    payload = wait_for_headband_ready(
         port, montage=args.montage, seconds=args.preflight_seconds,
-        physical_confirmed=confirmed, out_base=out_base)
-    if not result["passed"]:
-        print("\nRECORDING BLOCKED BY STARTUP GATE. Fix the first failed "
-              "startup stage; --force-record does not bypass hardware safety.")
-        return False
+        out_base=out_base, retry_delay=retry_delay,
+        electrode_mode=getattr(args, "electrode_mode", "thinkpulse"),
+        cyton_gain=getattr(args, "cyton_gain", None))
+    args.cyton_gain = payload.get("cyton_gain", args.cyton_gain)
     return True
 
 
-def _start_real_capture_with_preflight(backend, args):
-    """Open hardware, verify live raw EEG, report, then start capture thread."""
+def _start_real_capture_with_preflight(backend, args, quiet=False):
+    """Open hardware and return ``(capture, result)``; save only valid sessions."""
     from EEG.signal_preflight import (analyse_preflight, collect_preflight,
                                       print_preflight, save_preflight_report)
     try:
-        print("\nHardware connection check: opening board and waiting for samples...",
-              flush=True)
+        if not quiet:
+            print("\nHardware connection check: opening board and waiting for "
+                  "samples...", flush=True)
         backend.start()
-        try:
-            from ML.montage import get
-            channel_labels = list(get(args.montage).get("labels", []))
-        except Exception:
-            channel_labels = []
-        print(f"Connection PASS. Remain still for the "
-              f"{args.preflight_seconds:g}s signal-quality baseline...",
-              flush=True)
+        backend_info = backend.info()
+        source_labels = list(backend_info.get("channel_labels", []))
+        if len(source_labels) == int(backend_info.get("n_channels", 0)):
+            channel_labels = source_labels
+        else:
+            try:
+                from ML.montage import get
+                channel_labels = list(get(args.montage).get("labels", []))
+            except Exception:
+                channel_labels = []
+        if not quiet:
+            print(f"Connection PASS. Remain still for the "
+                  f"{args.preflight_seconds:g}s signal-quality baseline...",
+                  flush=True)
         data, fs, elapsed = collect_preflight(
             backend, seconds=args.preflight_seconds)
         result = analyse_preflight(
             data, fs=fs, elapsed=elapsed, channel_labels=channel_labels)
-        print_preflight(result)
+        result["input_source"] = backend_info.get("backend", "unknown")
+        result["acquisition"] = _acquisition_report_metadata(backend_info)
+        result["acquisition_route"] = result["acquisition"]["route"]
+        if result["input_source"] == "brainflow":
+            result["electrode_mode"] = backend_info.get(
+                "electrode_mode", getattr(args, "electrode_mode", "thinkpulse"))
+            result["cyton_profile"] = backend_info.get("cyton_profile")
+            result["cyton_gain"] = backend_info.get(
+                "cyton_gain", getattr(args, "cyton_gain", None) or
+                (8 if result["electrode_mode"] == "thinkpulse" else 24))
+        elif result["input_source"] == "openbci_gui_udp":
+            result["electrode_mode"] = "configured_in_openbci_gui"
+            result["cyton_profile"] = "configured_in_openbci_gui"
+            result["cyton_gain"] = None
+            result["gui_udp"] = {
+                "bind_ip": backend_info.get("bind_ip"),
+                "port": backend_info.get("port"),
+                "packet_schema": backend_info.get("packet_schema"),
+            }
+        else:
+            result["electrode_mode"] = None
+            result["cyton_profile"] = None
+            result["cyton_gain"] = None
+        if hasattr(backend, "raw_diagnostics"):
+            result["raw_transfer_diagnostics"] = backend.raw_diagnostics()
+        if not result["acceptable"] and not args.force_record:
+            backend.stop()
+            return None, result
+
+        # Failed automatic polls create no files. A report is written only when
+        # this preflight will proceed into an actual (or explicitly forced)
+        # data-recording session.
         stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         report_base = _recording_report_root(args) / f"preflight_{stamp}"
-        html_path, json_path = save_preflight_report(
-            result, data, report_base)
-        print(f"  preflight HTML -> {html_path}")
-        print(f"  preflight JSON -> {json_path}")
-        if not result["acceptable"] and not args.force_record:
-            print("\nRECORDING BLOCKED: fix the reported signal problem, then "
-                  "run again. Use --force-record only for deliberate debugging; "
-                  "forced data may be unusable for training.")
-            backend.stop()
-            return None
-        if not result["acceptable"]:
-            print("\nWARNING: --force-record accepted a failed preflight.")
-        return SessionCapture(backend).start(backend_already_started=True)
+        html_path, json_path = save_preflight_report(result, data, report_base)
+        result["html_report"] = str(html_path)
+        result["json_report"] = str(json_path)
+        if not quiet:
+            print_preflight(result)
+            print(f"  preflight HTML -> {html_path}")
+            print(f"  preflight JSON -> {json_path}")
+            if not result["acceptable"]:
+                print("\nWARNING: --force-record accepted a failed preflight.")
+        capture = SessionCapture(backend).start(backend_already_started=True)
+        return capture, result
     except Exception:
         try:
             backend.stop()
@@ -926,11 +1048,117 @@ def _start_real_capture_with_preflight(backend, args):
         raise
 
 
+def _start_real_capture_until_ready(backend, args, retry_delay=2.0):
+    """Poll live preflight; print each distinct failure once and save only READY."""
+    attempt = 0
+    last_failure = None
+    silent_repeats = 0
+    counter_visible = False
+    delay = max(0.0, float(retry_delay))
+    while True:
+        attempt += 1
+        failure_exception = None
+        result = None
+        try:
+            outcome = _start_real_capture_with_preflight(
+                backend, args, quiet=True)
+            if isinstance(outcome, tuple) and len(outcome) == 2:
+                capture, result = outcome
+            else:  # permits simple injected test doubles
+                capture = outcome
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001 - hardware faults must retry
+            capture = None
+            failure_exception = exc
+
+        if capture is not None:
+            if counter_visible:
+                print()
+                counter_visible = False
+            print(f"\nLIVE PREFLIGHT READY after {attempt} check(s). Continuing "
+                  "the recorder/example.")
+            if result and result.get("html_report"):
+                print(f"  preflight HTML -> {result['html_report']}")
+                print(f"  preflight JSON -> {result['json_report']}")
+            return capture
+
+        if failure_exception is not None:
+            signature = ("exception", type(failure_exception).__name__,
+                         str(failure_exception))
+        elif result is not None:
+            signature = (
+                "signal", tuple(result.get("shape", [])),
+                tuple((row.get("label"), tuple(row.get("reasons", [])))
+                      for row in result.get("channels", []) if not row.get("ok")),
+                tuple(result.get("debug", [])))
+        else:
+            signature = ("not-ready",)
+
+        if signature != last_failure:
+            if counter_visible:
+                print()
+                counter_visible = False
+            print("\nLIVE PREFLIGHT WAITING — no cue or recording has started")
+            if failure_exception is not None:
+                print(f"  [FAIL] {type(failure_exception).__name__}: "
+                      f"{failure_exception}")
+                from startup.check_headband import startup_failure_hints
+                hints = startup_failure_hints(
+                    exception=failure_exception,
+                    port=getattr(args, "serial_port", None) or "COM8",
+                    montage=getattr(args, "montage", "cyton8_motor"),
+                    seconds=getattr(args, "preflight_seconds", 6.0),
+                    electrode_mode=getattr(args, "electrode_mode", "thinkpulse"),
+                    cyton_gain=getattr(args, "cyton_gain", None))
+            elif result is not None:
+                from EEG.signal_preflight import print_preflight
+                print_preflight(result)
+                hints = [
+                    "Follow the channel-specific Debug guidance above.",
+                    "Detailed debugger: python tools/debug_bci_pipeline.py "
+                    f"--port {getattr(args, 'serial_port', None) or 'COM8'} "
+                    f"--montage {getattr(args, 'montage', 'cyton8_motor')} "
+                    f"--electrode-mode {getattr(args, 'electrode_mode', 'thinkpulse')} "
+                    f"--cyton-gain {getattr(args, 'cyton_gain', None) or (8 if getattr(args, 'electrode_mode', 'thinkpulse') == 'thinkpulse' else 24)} "
+                    f"--hardware-seconds "
+                    f"{max(2.0, float(getattr(args, 'preflight_seconds', 6.0))):g} "
+                    "--out reports/debug/headband",
+                ]
+            else:
+                hints = ["Check board power, dongle radio and the serial port."]
+            print("\n  HOW TO FIX / DEBUG:")
+            for hint in hints:
+                print(f"   - {hint}")
+            print("  Identical failures update the counter below in place; a new "
+                  "diagnostic block appears only when the failure changes.")
+            silent_repeats = 0
+            last_failure = signature
+        else:
+            silent_repeats += 1
+        print(f"\r  Silent repeated failures: {silent_repeats} | retry every "
+              f"{delay:g}s | Ctrl+C aborts", end="", flush=True)
+        counter_visible = True
+        time.sleep(delay)
+
+
+def _train_universal_models(args):
+    """Rebuild the personal finger/hand/feet models from universal sessions."""
+    from ML.train_intent_mi import train_universal_category_models
+
+    print("\nMapping universal data into separate category models...")
+    results = train_universal_category_models(args.subject)
+    for category, result in results.items():
+        print(f"  {category:<7} -> {result['path']}")
+    print("Games will select the category model(s) required by their intent map.")
+    return results
+
+
 def _generate_saved_recording_report(npz_path, args):
     """Generate HTML/JSON quality report immediately after saving an NPZ."""
     try:
         from tools.inspect_training_recordings import inspect_file, build_html
-        screening_kw = {"amp_uv": 400.0, "jump_uv": 75.0,
+        screening_kw = {"amp_uv": None, "jump_uv": None,
                         "flat_uv": .05, "z_max": 4.0}
         inspected = inspect_file(Path(npz_path), screening_kw)
         _, quality_report, assessment, _ = inspected
@@ -971,10 +1199,10 @@ def run_example(args):
         print("--mi/--button-mi/--intent-mi needs --subject")
         return 1
     # Mandatory direct-Cyton gate runs before loading/prewarming the app, opening
-    # pygame, or starting a timed cue. A failed known-signal/normal-input stage
-    # stops the recording rather than producing another unusable NPZ.
-    if capture_mode and not args.dry_run and not _run_required_headband_startup(args):
-        return 1
+    # pygame, or starting a timed cue. Failure blocks data capture but keeps this
+    # recorder/example process alive and repeats the check until the issue is fixed.
+    if capture_mode and not args.dry_run:
+        _run_required_headband_startup(args)
 
     script_source = script.read_text()
     explicit_integration = "__bci_recorder_frame__" in script_source
@@ -1003,34 +1231,66 @@ def run_example(args):
             from stream_bridge import SyntheticBackend
             backend = SyntheticBackend(fs=250, n_channels=8)
             print("DRY-RUN: synthetic backend, no hardware touched")
-        else:
-            from stream_bridge import BrainFlowBackend
-            if args.board_id == 0 and not args.serial_port:
-                print("Direct Cyton mode needs --serial-port COM4 (replace "
-                      "COM4 with the dongle port that appears in Windows).")
+        elif getattr(args, "eeg_csv", None):
+            from stream_bridge import OpenBCICSVBackend
+            try:
+                backend = OpenBCICSVBackend(
+                    args.eeg_csv, n_channels=8, loop=True,
+                    speed=getattr(args, "eeg_csv_speed", 1.0),
+                    fs=getattr(args, "eeg_csv_fs", None))
+            except (FileNotFoundError, ValueError) as exc:
+                print(f"OpenBCI GUI CSV error: {exc}")
                 return 1
-            # serial_port must be a string: BrainFlow rejects None with a
-            # bare GENERAL_ERROR:17 that says nothing about the cause. The
-            # streaming board (-2) receives UDP and needs no serial port.
-            backend = BrainFlowBackend(board_id=args.board_id,
-                                       serial_port=args.serial_port or "",
-                                       n_channels=8)
+            info = backend.info()
+            print(f"OFFLINE CHECK: {info['path']} · {info['n_channels']} EEG "
+                  f"channels · {info['fs']:g} Hz · {info['duration_s']:.1f}s; "
+                  "replay loops as needed")
+            if info["rows_dropped"]:
+                print(f"  skipped {info['rows_dropped']} malformed/non-finite "
+                      "CSV row(s)")
+        else:
+            route = getattr(args, "acquisition_route", "direct")
+            if route == "gui-udp":
+                from stream_bridge import OpenBCIGUIUDPBackend
+                print("OPENBCI GUI UDP ROUTE: keep the GUI connected to Cyton, "
+                      "then configure Networking -> UDP -> Time Series Raw "
+                      f"-> {args.gui_udp_ip}:{args.gui_udp_port}. Do not select "
+                      "Time Series Filtered.")
+                backend = OpenBCIGUIUDPBackend(
+                    bind_ip=args.gui_udp_ip, port=args.gui_udp_port,
+                    fs=args.gui_udp_fs, n_channels=8)
+            else:
+                from stream_bridge import BrainFlowBackend
+                if args.board_id == 0 and not args.serial_port:
+                    print("Direct Cyton mode needs --serial-port COM4 (replace "
+                          "COM4 with the dongle port that appears in Windows).")
+                    return 1
+                # serial_port must be a string: BrainFlow rejects None with a
+                # bare GENERAL_ERROR:17 that says nothing about the cause.
+                backend = BrainFlowBackend(
+                    board_id=args.board_id, serial_port=args.serial_port or "",
+                    n_channels=8,
+                    electrode_mode=getattr(args, "electrode_mode", "thinkpulse"),
+                    cyton_gain=getattr(args, "cyton_gain", None),
+                    cyton_profile=getattr(args, "cyton_profile", None))
         if args.dry_run:
             capture = SessionCapture(backend).start()
-        else:
-            try:
-                capture = _start_real_capture_with_preflight(backend, args)
-            except Exception as exc:
-                print("\nHARDWARE CONNECTION/PREFLIGHT FAILED")
-                print(f"  {type(exc).__name__}: {exc}")
-                print("  Check board power/radio/COM port first. If the board "
-                      "opens, inspect the generated preflight report for flat, "
-                      "amplitude or jump failures.")
-                return 1
+        elif getattr(args, "eeg_csv", None):
+            capture, _csv_preflight = _start_real_capture_with_preflight(
+                backend, args, quiet=False)
             if capture is None:
+                print("\nOFFLINE CSV CHECK BLOCKED: this file failed adaptive "
+                      "signal preflight. Fix/export another file, or use "
+                      "--force-record only to exercise the remaining UI path.")
                 return 1
-            print(f"Recording started after connection and signal checks "
-                  f"(board_id={args.board_id})")
+            print("Offline CSV replay started after adaptive signal checks; "
+                  "no hardware was opened.")
+        else:
+            capture = _start_real_capture_until_ready(
+                backend, args, retry_delay=args.startup_retry_delay)
+            print("Recording started after connection and signal checks "
+                  f"(route={getattr(args, 'acquisition_route', 'direct')}, "
+                  f"board_id={args.board_id})")
     elif not args.dry_run:
         BCI = _load_bci()
         BCI.start(BID=args.board_id, port=args.serial_port, plot_domain="f")
@@ -1368,6 +1628,13 @@ def run_example(args):
                 elif args.dry_run:
                     out = (ROOT / "dry_runs" / script.stem /
                            str(args.subject).lower())
+                elif getattr(args, "eeg_csv", None):
+                    # A replayed file is useful for exercising acquisition,
+                    # preflight, cueing, epoching and saving, but its EEG was not
+                    # recorded in response to these new cues. Isolate it so it
+                    # can never enter automatic personal-model training.
+                    out = (ROOT / "offline_checks" / script.stem /
+                           str(args.subject).lower())
                 elif args.button_mi:
                     from ML.button_mi import button_profile_dir
                     out = button_profile_dir(args.subject, script.stem)
@@ -1380,9 +1647,17 @@ def run_example(args):
                     out = api.general_recording_dir()
                 else:
                     out = ROOT / "profiles" / args.subject.lower()
-                npz = save_session(X, y, labels, args.subject, capture.fs,
-                                   args.montage, out)
-                if args.button_mi:
+                npz = save_session(
+                    X, y, labels, args.subject, capture.fs, args.montage, out,
+                    channel_labels=(capture.channel_labels or None),
+                    acquisition=capture.acquisition)
+                if getattr(args, "eeg_csv", None):
+                    print(f"  {len(X)} offline-check epoch(s)")
+                    print(f"  offline pipeline-check output -> {npz}")
+                    print("  NOT TRAINING DATA: the replayed EEG is unrelated to "
+                          "the new on-screen cue times; automatic model training "
+                          "is disabled for CSV replay")
+                elif args.button_mi:
                     counts = [(b.name, int((y == i).sum()))
                               for i, b in enumerate(rec.buttons)]
                     print(f"  {len(X)} direct-button epochs  (" +
@@ -1399,9 +1674,9 @@ def run_example(args):
                         print(f"  synthetic rehearsal -> {npz}")
                         print("  WARNING: do not train a real model from dry-run data")
                     elif args.universal_pool:
-                        print(f"  generalized reusable training pool -> {npz}")
-                        print("  this recording is training data, not a runtime "
-                              "profile; task models filter their labels from it")
+                        print(f"  universal reusable training pool -> {npz}")
+                        print("  labels will be split into personal finger, hand "
+                              "and feet category models")
                     else:
                         print(f"  generalized intent training data -> {npz}")
                         joined = ",".join(rec.intent_values)
@@ -1413,6 +1688,15 @@ def run_example(args):
                     print(f"  calibration -> {npz}")
                     print(f"  next:  python ML/train_local.py {args.subject}")
                 _generate_saved_recording_report(npz, args)
+                if (args.intent_mi and args.universal_pool and
+                        not args.dry_run and not getattr(args, "eeg_csv", None) and
+                        not args.no_auto_train):
+                    try:
+                        _train_universal_models(args)
+                    except Exception as exc:
+                        print("  WARNING: universal recording was saved, but "
+                              "category-model training failed: "
+                              f"{type(exc).__name__}: {exc}")
         try:
             pygame.quit()
         except Exception:
@@ -1569,6 +1853,9 @@ def cli():
         description="Record EEG while running an example app with cued targets")
     ap.add_argument("--file", default=None,
                     help="script in example/ to run, e.g. rockpaperscissors")
+    ap.add_argument("--universal", metavar="SUBJECT", default=None,
+                    help="short form for a universal ThinkPulse recording; "
+                         "example: --universal anson")
     ap.add_argument("--trials", type=int, default=10,
                     help="number of action trials for app-specific recording")
     ap.add_argument("--trials-per-intent", type=int, default=8,
@@ -1578,14 +1865,32 @@ def cli():
     ap.add_argument("--cue", type=float, default=5.0, help="seconds per cue")
     ap.add_argument("--rest", type=float, default=2.0, help="seconds between cues")
     ap.add_argument("--board-id", type=int, default=0,
-                    help="0 direct Cyton (default) · -2 streaming board from "
-                         "an OpenBCI GUI/BrainFlow producer · -1 synthetic")
-    ap.add_argument("--serial-port", default=None, help="e.g. COM4")
+                    help="0 direct Cyton (default) · -2 BrainFlow Streaming "
+                         "Board producer (not GUI JSON) · -1 synthetic")
+    ap.add_argument("--serial-port", default="COM8",
+                    help="Cyton dongle port (default: COM8)")
+    ap.add_argument("--acquisition-route", choices=("direct", "gui-udp"),
+                    default="direct",
+                    help="direct: Python owns Cyton COM; gui-udp: OpenBCI GUI "
+                         "owns COM and sends Networking Time Series Raw JSON")
+    ap.add_argument("--gui-udp-ip", default="127.0.0.1",
+                    help="local bind/destination IP for GUI Networking UDP")
+    ap.add_argument("--gui-udp-port", type=int, default=12345,
+                    help="local GUI Networking UDP port (default 12345)")
+    ap.add_argument("--gui-udp-fs", type=float, default=250.0,
+                    help="sample rate declared for GUI raw UDP (Cyton=250)")
+    ap.add_argument("--eeg-csv", default=None, metavar="OPENBCI_GUI.csv",
+                    help="offline-check the EEG pipeline by replaying an OpenBCI "
+                         "GUI CSV instead of opening hardware")
+    ap.add_argument("--eeg-csv-speed", type=float, default=1.0,
+                    help="OpenBCI CSV replay speed multiplier (default: 1.0)")
+    ap.add_argument("--eeg-csv-fs", type=float, default=None,
+                    help="override CSV sample rate when metadata/session_time "
+                         "cannot determine it reliably")
     ap.add_argument("--preflight-seconds", type=float, default=6.0,
                     help="seconds per startup/normal-input baseline check")
-    ap.add_argument("--confirm-srb-bias", action="store_true",
-                    help="confirm SRB/reference, BIAS and all 8 leads are attached; "
-                         "otherwise the recorder prompts before hardware startup")
+    ap.add_argument("--startup-retry-delay", type=float, default=2.0,
+                    help="seconds between silent startup/live-preflight polls")
     ap.add_argument("--force-record", action="store_true",
                     help="continue after failed signal-quality preflight; for "
                          "deliberate debugging only")
@@ -1593,6 +1898,8 @@ def cli():
                     help="quality-report root; default reports/recording_quality")
     ap.add_argument("--dry-run", action="store_true",
                     help="run the UI and cues without recording EEG")
+    ap.add_argument("--no-auto-train", action="store_true",
+                    help="save universal data without rebuilding category models")
     ap.add_argument("--list", action="store_true", help="list example scripts")
     modes = ap.add_mutually_exclusive_group()
     modes.add_argument("--mi", action="store_true",
@@ -1614,12 +1921,64 @@ def cli():
     ap.add_argument("--subject", default=None,
                     help="subject name for any MI calibration mode")
     ap.add_argument("--montage", default="cyton8_motor")
+    ap.add_argument("--electrode-mode", choices=("passive", "thinkpulse"),
+                    default="thinkpulse",
+                    help="legacy profile selector; default ThinkPulse active")
+    ap.add_argument("--cyton-profile",
+                    choices=("openbci_gui_default", "thinkpulse_active"),
+                    default=None,
+                    help="explicit direct-Cyton ADS1299 profile; overrides the "
+                         "legacy --electrode-mode mapping")
+    ap.add_argument("--cyton-gain", type=int,
+                    choices=(1, 2, 4, 6, 8, 12, 24), default=None,
+                    help="default 8 for ThinkPulse, 24 for passive electrodes")
     ap.add_argument("--out", default=None,
                     help="output override; default keeps all MI modes isolated")
     ap.add_argument("--debug-timing", action="store_true",
                     help="print a 1 Hz recorder heartbeat, phase transitions, "
                          "frame-hook activity and capture-thread state")
     args = ap.parse_args()
+    if args.eeg_csv and args.dry_run:
+        ap.error("--eeg-csv already provides offline EEG; do not combine it with --dry-run")
+    if args.eeg_csv and args.acquisition_route != "direct":
+        ap.error("--eeg-csv is an offline source; do not combine it with --acquisition-route gui-udp")
+    if not (1 <= args.gui_udp_port <= 65535):
+        ap.error("--gui-udp-port must be in 1..65535")
+    if not np.isfinite(args.gui_udp_fs) or args.gui_udp_fs <= 0:
+        ap.error("--gui-udp-fs must be finite and greater than zero")
+    if not np.isfinite(args.eeg_csv_speed) or args.eeg_csv_speed <= 0:
+        ap.error("--eeg-csv-speed must be finite and greater than zero")
+    if (args.eeg_csv_fs is not None and
+            (not np.isfinite(args.eeg_csv_fs) or args.eeg_csv_fs <= 0)):
+        ap.error("--eeg-csv-fs must be finite and greater than zero")
+    if args.acquisition_route == "direct":
+        from EEG.cyton_commands import cyton_profile_settings
+        try:
+            profile = cyton_profile_settings(
+                args.cyton_profile, electrode_mode=args.electrode_mode,
+                gain=args.cyton_gain)
+        except ValueError as exc:
+            ap.error(str(exc))
+        args.cyton_profile = profile["name"]
+        args.electrode_mode = profile["electrode_mode"]
+        args.cyton_gain = profile["gain"]
+    csv_capture_mode = bool(
+        args.universal or args.intent_mi or
+        (args.file and (args.mi or args.button_mi)))
+    if args.eeg_csv and not csv_capture_mode:
+        ap.error("--eeg-csv requires --universal/--intent-mi, or --file with "
+                 "--mi/--button-mi")
+    if args.universal:
+        if args.file or args.mi or args.button_mi:
+            ap.error("--universal cannot be combined with --file, --mi or --button-mi")
+        if args.subject and args.subject.casefold() != args.universal.casefold():
+            ap.error("--universal SUBJECT conflicts with --subject")
+        args.subject = args.universal
+        args.intent_mi = True
+    if (args.acquisition_route == "direct" and
+            args.electrode_mode == "thinkpulse" and
+            args.cyton_gain is not None and args.cyton_gain > 8):
+        ap.error("ThinkPulse requires --cyton-gain 8 or lower")
     args.universal_pool = False
 
     if args.list:
@@ -1657,5 +2016,14 @@ def cli():
     return 0
 
 
+def _run_cli_safely(cli_fn=None):
+    """Return a clean operator-abort code instead of a KeyboardInterrupt traceback."""
+    try:
+        return (cli_fn or cli)()
+    except KeyboardInterrupt:
+        print("\nStopped by operator (Ctrl+C). No recording session was started.")
+        return 130
+
+
 if __name__ == "__main__":
-    sys.exit(cli())
+    sys.exit(_run_cli_safely())

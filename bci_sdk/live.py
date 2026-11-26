@@ -252,11 +252,12 @@ class LiveBCI:
     """Stream -> window -> classify -> gate -> select, polled from a game loop."""
 
     def __init__(self, buttons, source="sine", user=None, scheme="tree",
-                 serial_port=None, recording=None, sample_freq=250,
+                 serial_port="COM8", recording=None, sample_freq=250,
                  window=750, hop=250, on_select=None, on_change=None,
                  freq_map=None, probe_channels=(1, 2), verbose=True,
                  app=None, model_root=None, intent_map=None,
-                 public_model_root=None, **decider_kw):
+                 public_model_root=None, electrode_mode="thinkpulse",
+                 cyton_gain=None, **decider_kw):
         self.verbose = verbose
         self.source = source
         self.sample_freq = sample_freq
@@ -322,20 +323,32 @@ class LiveBCI:
             self.selector = sel(buttons, on_select=on_select, on_change=on_change)
             active_scheme = scheme
 
+        artifact_channels = (0, 1)
+        model_montage = getattr(self.model, "montage", None)
+        if model_montage:
+            try:
+                from ML.montage import get as get_montage
+                artifact_channels = tuple(
+                    get_montage(model_montage).get("artifact", artifact_channels))
+            except (KeyError, TypeError, ValueError):
+                pass
         self.decider = RealtimeDecider(
             self.model, self.selector,
-            artifact=ArtifactDetector(sample_freq=sample_freq,
-                                      threshold_uv=artifact_uv),
+            artifact=ArtifactDetector(
+                channels=artifact_channels, sample_freq=sample_freq,
+                threshold_uv=artifact_uv),
             **decider_kw)
 
         # ---- stream
-        self.bridge = self._make_bridge(source, serial_port, recording,
-                                        sample_freq, window, hop)
+        self.bridge = self._make_bridge(
+            source, serial_port or "COM8", recording, sample_freq, window, hop,
+            electrode_mode=electrode_mode, cyton_gain=cyton_gain)
         if self.verbose:
             print(f"[LiveBCI] source={source} scheme={active_scheme} "
                   f"model={self.model}")
 
-    def _make_bridge(self, source, serial_port, recording, fs, window, hop):
+    def _make_bridge(self, source, serial_port, recording, fs, window, hop,
+                     electrode_mode="thinkpulse", cyton_gain=None):
         from stream_bridge import StreamBridge, ReplayBackend, BrainFlowBackend
         if source in ("sine", "synthetic"):
             backend = BrainFlowBackend(board_id=-1, serial_port="",
@@ -344,8 +357,9 @@ class LiveBCI:
                                     and recording):
             backend = ReplayBackend(recording, loop=True, hop=hop)
         else:
-            backend = BrainFlowBackend(board_id=0, serial_port=serial_port,
-                                       n_channels=8)
+            backend = BrainFlowBackend(
+                board_id=0, serial_port=serial_port, n_channels=8,
+                electrode_mode=electrode_mode, cyton_gain=cyton_gain)
         return StreamBridge(backend=backend, window=window, hop=hop)
 
     def start(self):

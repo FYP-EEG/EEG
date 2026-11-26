@@ -495,7 +495,7 @@ class IntentCalibrationPanel:
             self.error = "One-intent calibration requires at least 8 idle trials."
             self.state = self.ERROR; return
         if self.source == "cyton" and not self.serial_port:
-            self.error = "CYTON source needs --port COM4 (or the correct serial port)."
+            self.error = "CYTON source needs --port COM8 (or the correct serial port)."
             self.state = self.ERROR; return
         if self.on_before_record:
             try:

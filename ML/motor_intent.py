@@ -88,6 +88,14 @@ _CATEGORY_INTENTS = {
     CATEGORY_FEET: frozenset(FEET_INTENTS),
 }
 
+# One universal recording is split into independent personal classifiers. Games
+# load only the category model(s) required by their action-to-intent mapping.
+UNIVERSAL_CATEGORY_INTENTS = {
+    CATEGORY_FINGER: FINGER_INTENTS,
+    CATEGORY_HAND: ("left_hand", "right_hand"),
+    CATEGORY_FEET: ("both_feet",),
+}
+
 _ALIASES = {
     "left_little": "left_pinky", "right_little": "right_pinky",
     "left_little_finger": "left_pinky", "right_little_finger": "right_pinky",
@@ -252,24 +260,18 @@ def public_category_model_dir(category, root=None):
 
 
 def model_candidates(user, intents, root=None, public_root=None):
-    """Ordered model locations without silently choosing a universal model."""
+    """Return category-first runtime locations plus an exact-model fallback."""
     values = canonical_intents(intents)
-    rows = [("exact-task-set", intent_profile_dir(user, values, root=root) /
-             "intent_model.joblib")]
-    categories = category_for_intents(values, require_single=False)
-    if len(categories) == 1:
-        category = categories[0]
-        rows.append(("personal-category", category_profile_dir(
+    rows = []
+    for category in category_for_intents(values, require_single=False):
+        rows.append((f"personal-category:{category}", category_profile_dir(
             user, category, root=root) / "intent_model.joblib"))
-        rows.append(("public-pretraining-only", public_category_model_dir(
-            category, root=public_root) / "category_model.joblib"))
+        rows.append((f"public-pretraining-only:{category}",
+                     public_category_model_dir(
+                         category, root=public_root) / "category_model.joblib"))
+    rows.append(("exact-task-set-fallback", intent_profile_dir(
+        user, values, root=root) / "intent_model.joblib"))
     return rows
-
-
-def universal_profile_dir(user, root=None):
-    """Legacy per-user universal pool, retained for old recordings only."""
-    base = Path(root) if root is not None else PROFILES
-    return base / _slug(user) / "motor_intent" / "_universal_13"
 
 
 def general_recording_dir(root=None):
@@ -470,36 +472,57 @@ class MotorIntentModel:
     @classmethod
     def load_resolved(cls, user, intents, root=None, confidence_threshold=None,
                       public_root=None):
-        """Resolve exact task set first, then a matching personal category.
+        """Load the personal category model(s) selected by a game's intents.
 
-        A public category model is deliberately not served directly: it is a
-        benchmark/pretraining artefact without this user's calibrated head.
-        The error names it when available and gives the transfer-training path.
+        A finger-only game loads the finger specialist. A mixed game such as
+        hand-left/hand-right/both-feet loads the hand and feet specialists and
+        routes each accepted prediction. An exact task-set model is retained
+        only as an in-app-calibration fallback when category models have not yet
+        been generated. Public benchmark models are never served directly.
         """
         values = canonical_intents(intents)
-        candidates = model_candidates(user, values, root=root,
-                                      public_root=public_root)
-        for scope, path in candidates:
-            if scope == "public-pretraining-only":
-                continue
+        grouped = split_intents_by_category(values)
+        loaded, missing = {}, []
+        for category, active in grouped.items():
+            path = (category_profile_dir(user, category, root=root) /
+                    "intent_model.joblib")
             if not path.exists():
+                missing.append((category, path))
                 continue
+            loaded[category] = cls._load_path(
+                path, user, active, confidence_threshold,
+                model_scope=f"personal-category:{category}",
+                require_exact=False)
+
+        if not missing:
+            if len(loaded) == 1:
+                return next(iter(loaded.values()))
+            return CategoryMotorIntentRouter(user, values, loaded)
+
+        exact = intent_profile_dir(user, values, root=root) / "intent_model.joblib"
+        if exact.exists():
             return cls._load_path(
-                path, user, values, confidence_threshold,
-                model_scope=scope, require_exact=(scope == "exact-task-set"))
-        public = next((path for scope, path in candidates
-                       if scope == "public-pretraining-only" and path.exists()), None)
-        joined = ",".join(values)
-        extra = (f"\nA public pretraining model exists at {public}, but it cannot "
-                 "replace personal calibration. Fine-tune/train a personal "
-                 "category head with ML/train_intent_mi.py."
-                 if public else "")
-        searched = "\n".join(f"  {scope}: {path}" for scope, path in candidates
-                              if scope != "public-pretraining-only")
+                exact, user, values, confidence_threshold,
+                model_scope="exact-task-set-fallback", require_exact=True)
+
+        public = []
+        for category, _ in missing:
+            path = (public_category_model_dir(category, root=public_root) /
+                    "category_model.joblib")
+            if path.exists():
+                public.append(path)
+        public_note = (
+            "\nPublic pretraining exists but cannot replace personal calibration: "
+            + ", ".join(str(path) for path in public)
+            if public else "")
+        searched = "\n".join(
+            f"  personal-category:{category}: {path}"
+            for category, path in missing)
         raise FileNotFoundError(
-            f"no compatible personal motor-intent model for user={user!r}, "
-            f"intents={values!r}. Searched:\n{searched}{extra}\n"
-            f"Train with `python ML/train_intent_mi.py {user} --intents {joined}`.")
+            f"no compatible personal category model(s) for user={user!r}, "
+            f"intents={values!r}. Missing:\n{searched}{public_note}\n"
+            f"Record/train them with `python EEG/data_record.py --universal "
+            f"{user}`.")
 
     def _prepare(self, window):
         x = np.asarray(window, dtype=np.float64)
@@ -563,3 +586,61 @@ class MotorIntentModel:
         return (f"<MotorIntentModel intents={len(self.intents)} "
                 f"pipeline={d['pipeline']} cv={acc} "
                 f"thr={self.confidence_threshold:.2f}>")
+
+
+class CategoryMotorIntentRouter:
+    """Route one EEG window through the category models required by a game."""
+
+    def __init__(self, user, intents, models):
+        self.user = str(user)
+        self.intents = canonical_intents(intents)
+        self.models = dict(models)
+        expected = set(category_for_intents(self.intents, require_single=False))
+        if set(self.models) != expected:
+            raise ValueError(
+                f"category router needs {sorted(expected)}, got "
+                f"{sorted(self.models)}")
+        sample_rates = {model.sample_freq for model in self.models.values()}
+        montages = {model.montage for model in self.models.values()}
+        if len(sample_rates) != 1 or len(montages) != 1:
+            raise ValueError(
+                "category models must use one sample rate and montage: "
+                f"fs={sample_rates}, montages={montages}")
+        self.sample_freq = sample_rates.pop()
+        self.montage = montages.pop()
+        self.model_scope = "personal-category-router"
+        self.last_category = None
+
+    def predict_command(self, window):
+        accepted = []
+        rejected_confidence = 0.0
+        for category, model in self.models.items():
+            intent, confidence = model.predict_command(window)
+            rejected_confidence = max(rejected_confidence, float(confidence))
+            if intent is not None:
+                accepted.append((float(confidence), category, intent))
+        if not accepted:
+            self.last_category = None
+            return None, rejected_confidence
+        confidence, category, intent = max(accepted, key=lambda row: row[0])
+        self.last_category = category
+        return intent, confidence
+
+    def describe(self):
+        return {
+            "kind": "CategoryMotorIntentRouter",
+            "user": self.user,
+            "intents": list(self.intents),
+            "model_scope": self.model_scope,
+            "categories": {
+                category: model.describe()
+                for category, model in self.models.items()
+            },
+            "sample_freq": self.sample_freq,
+            "montage": self.montage,
+        }
+
+    def __repr__(self):
+        return (f"<CategoryMotorIntentRouter "
+                f"categories={','.join(self.models)} "
+                f"intents={len(self.intents)}>")
