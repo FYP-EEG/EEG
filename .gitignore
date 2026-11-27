@@ -30,7 +30,6 @@ dataset/motor_intent/quarantine/
 offline_checks/
 reports/cyton_transfer/
 reports/startup/
-reports/recording_quality/
 reports/public_mi/full_run_console*.log
 reports/public_mi/public_mi_workflow_*.json
 

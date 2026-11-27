@@ -1,0 +1,337 @@
+{
+  "created": "2026-11-26T09:56:17",
+  "shape": [
+    8,
+    1497
+  ],
+  "fs": 250,
+  "elapsed_s": 6.003533000010066,
+  "effective_fs": 249.35317253981782,
+  "rate_error_pct": 0.25873098407287215,
+  "finite": true,
+  "connection_ok": true,
+  "signal_ok": true,
+  "acceptable": true,
+  "thresholds": {
+    "amp_uv": null,
+    "jump_uv": null,
+    "flat_uv": 0.05,
+    "amplitude_z": 12.0,
+    "jump_z": 12.0,
+    "peer_scale_factor": 8.0,
+    "clip_fraction": 0.02,
+    "rate_tolerance": 0.15
+  },
+  "adaptive_amplitude": true,
+  "boardwide_range_failure": false,
+  "possible_test_signal": false,
+  "channels": [
+    {
+      "index": 0,
+      "label": "F3",
+      "median_uv": -7629.410341907781,
+      "peak_uv": 13534.16008164407,
+      "std_uv": 2945.858182352129,
+      "robust_scale_uv": 1327.4036201719791,
+      "jump_uv": 1376.6439410023631,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 15928.84344206375,
+      "jump_limit_uv": 10318.197043919216,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 1,
+      "label": "C3",
+      "median_uv": -7348.583024571303,
+      "peak_uv": 13530.270878108844,
+      "std_uv": 2977.361365335014,
+      "robust_scale_uv": 1357.228446868472,
+      "jump_uv": 1376.2416096021661,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 16286.741362421664,
+      "jump_limit_uv": 11416.94365941807,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 2,
+      "label": "CZ",
+      "median_uv": -7974.744793742275,
+      "peak_uv": 13545.425360849544,
+      "std_uv": 3014.173809431511,
+      "robust_scale_uv": 1463.8024942639468,
+      "jump_uv": 1376.3757200688997,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 17565.62993116736,
+      "jump_limit_uv": 12374.917092909462,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 3,
+      "label": "P3",
+      "median_uv": -7782.698605382277,
+      "peak_uv": 13545.693581783009,
+      "std_uv": 3104.91358366915,
+      "robust_scale_uv": 1790.6825948575256,
+      "jump_uv": 1426.667145093339,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 21488.191138290305,
+      "jump_limit_uv": 14825.32485429346,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 4,
+      "label": "PZ",
+      "median_uv": -7817.701437199287,
+      "peak_uv": 13549.985116718424,
+      "std_uv": 3006.914073229865,
+      "robust_scale_uv": 1414.293281947767,
+      "jump_uv": 1376.5098305356296,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 16971.519383373205,
+      "jump_limit_uv": 12106.49365264101,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 5,
+      "label": "F4",
+      "median_uv": -7878.855810029007,
+      "peak_uv": 13545.157139916082,
+      "std_uv": 2956.7709890216865,
+      "robust_scale_uv": 1335.555739469022,
+      "jump_uv": 1376.6439410023631,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 16026.668873628263,
+      "jump_limit_uv": 10442.268322976632,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 6,
+      "label": "C4",
+      "median_uv": -7896.558391637611,
+      "peak_uv": 13564.334936658734,
+      "std_uv": 2970.7032465501206,
+      "robust_scale_uv": 1342.1172013422492,
+      "jump_uv": 1377.5827142694834,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 16105.406416106991,
+      "jump_limit_uv": 10837.149028438216,
+      "reasons": [],
+      "ok": true
+    },
+    {
+      "index": 7,
+      "label": "P4",
+      "median_uv": -8001.969218488839,
+      "peak_uv": 13562.725611057953,
+      "std_uv": 2956.625589499359,
+      "robust_scale_uv": 1336.9475647148558,
+      "jump_uv": 1377.4486038027535,
+      "clip_fraction": 0.0006680026720106881,
+      "longest_extreme_run": 1,
+      "amplitude_limit_uv": 16043.370776578271,
+      "jump_limit_uv": 10402.899551737251,
+      "reasons": [],
+      "ok": true
+    }
+  ],
+  "debug": [
+    "Connection and gross raw-signal checks passed."
+  ],
+  "input_source": "brainflow",
+  "acquisition": {
+    "route": "direct_cyton",
+    "backend": "brainflow",
+    "fs": 250.0,
+    "n_channels": 8,
+    "channel_labels": [],
+    "units": "uV",
+    "filtered": false,
+    "board_id": 0,
+    "master_board": -1,
+    "descriptor_board_id": 0,
+    "eeg_channel_rows": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "package_num_row": 0,
+    "timestamp_row": 22,
+    "board_rows": 24,
+    "stream_buffer_size": 450000,
+    "cyton_profile": "thinkpulse_active",
+    "cyton_gain": 4,
+    "electrode_mode": "thinkpulse",
+    "profile_settings": {
+      "description": "Powered ThinkPulse active-electrode profile",
+      "electrode_mode": "thinkpulse",
+      "gain": 4,
+      "maximum_gain": 8,
+      "input": "normal",
+      "include_bias": false,
+      "srb2": true,
+      "srb1": false,
+      "physical_bias_expected": false,
+      "reference": "SRB2",
+      "name": "thinkpulse_active"
+    }
+  },
+  "acquisition_route": "direct_cyton",
+  "electrode_mode": "thinkpulse",
+  "cyton_profile": "thinkpulse_active",
+  "cyton_gain": 4,
+  "raw_transfer_diagnostics": {
+    "fs": 250,
+    "n_channels": 8,
+    "backend": "brainflow",
+    "acquisition_route": "direct_cyton",
+    "board_id": 0,
+    "master_board": -1,
+    "descriptor_board_id": 0,
+    "electrode_mode": "thinkpulse",
+    "cyton_profile": "thinkpulse_active",
+    "cyton_gain": 4,
+    "profile_settings": {
+      "description": "Powered ThinkPulse active-electrode profile",
+      "electrode_mode": "thinkpulse",
+      "gain": 4,
+      "maximum_gain": 8,
+      "input": "normal",
+      "include_bias": false,
+      "srb2": true,
+      "srb1": false,
+      "physical_bias_expected": false,
+      "reference": "SRB2",
+      "name": "thinkpulse_active"
+    },
+    "eeg_channel_rows": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "package_num_row": 0,
+    "timestamp_row": 22,
+    "board_rows": 24,
+    "units": "uV",
+    "filtered": false,
+    "stream_buffer_size": 450000,
+    "last_cleanup_error": null,
+    "reads": 570,
+    "samples_received": 1498,
+    "effective_fs_since_first_read": 249.95283766961117,
+    "channel_mean_uv": [
+      -8831.19482535147,
+      -8514.835306912404,
+      -9105.074002952935,
+      -8808.367487102592,
+      -8960.073730511918,
+      -9075.524041835319,
+      -9085.519121239722,
+      -9206.33241881086
+    ],
+    "channel_std_uv": [
+      2953.7069673859046,
+      2984.4923911630517,
+      3022.3431049686874,
+      3112.214860513997,
+      3014.8176916512716,
+      2965.0765085580283,
+      2978.9810215577663,
+      2965.2009957951705
+    ],
+    "channel_min_uv": [
+      -21163.57042355185,
+      -20878.853902680148,
+      -21520.17015459182,
+      -21328.392187165286,
+      -21367.686553917712,
+      -21424.01294994509,
+      -21460.893328296344,
+      -21564.694829546792
+    ],
+    "channel_max_uv": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "missing_packets_estimate": 0,
+    "duplicate_packages": 0,
+    "out_of_order_packages": 0,
+    "nonmonotonic_timestamps": 0,
+    "packet_continuity_exact": true,
+    "command_results": [
+      {
+        "command": "d",
+        "response": "updating channel settings to default$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x1020010X",
+        "response": "Success: Channel set for 1$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x2020010X",
+        "response": "Success: Channel set for 2$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x3020010X",
+        "response": "Success: Channel set for 3$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x4020010X",
+        "response": "Success: Channel set for 4$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x5020010X",
+        "response": "Success: Channel set for 5$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x6020010X",
+        "response": "Success: Channel set for 6$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x7020010X",
+        "response": "Success: Channel set for 7$$$",
+        "response_decode_ignored": false
+      },
+      {
+        "command": "x8020010X",
+        "response": "Success: Channel set for 8$$$",
+        "response_decode_ignored": false
+      }
+    ]
+  }
+}
