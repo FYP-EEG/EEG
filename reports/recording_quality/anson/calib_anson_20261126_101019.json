@@ -1,0 +1,1310 @@
+[
+  {
+    "file": "D:\\cu_hw\\FYP\\dataset\\motor_intent\\calib_anson_20261126_101019.npz",
+    "files": [
+      "D:\\cu_hw\\FYP\\dataset\\motor_intent\\calib_anson_20261126_101019.npz"
+    ],
+    "trials": 119,
+    "sessions": 1,
+    "subjects": [
+      "anson"
+    ],
+    "fs": 250,
+    "montage": "cyton8_motor",
+    "channel_labels": [
+      "F3",
+      "C3",
+      "CZ",
+      "P3",
+      "PZ",
+      "F4",
+      "C4",
+      "P4"
+    ],
+    "shape": [
+      119,
+      8,
+      750
+    ],
+    "kept": 119,
+    "dropped": 0,
+    "drop_rate": 0.0,
+    "drop_reason_counts": {
+      "amplitude": 0,
+      "flat": 0,
+      "jump": 0,
+      "outlier": 0,
+      "noncompliant": 0
+    },
+    "screening_thresholds": {
+      "amp_uv": null,
+      "jump_uv": null,
+      "flat_uv": 0.05,
+      "z_max": 4.0
+    },
+    "adaptive_limits": {
+      "amplitude_history_uv": [
+        10949.31494140625,
+        11262.499101987456,
+        11229.60595703125,
+        11071.71831408081,
+        10699.333129882812,
+        11375.7861328125,
+        11094.958984375,
+        11579.097900390625
+      ],
+      "amplitude_trial_uv": 11063.44287109375,
+      "jump_history_uv": [
+        11521.41247758789,
+        12502.40681989746,
+        12538.632532250977,
+        12606.524903417969,
+        12131.002809106445,
+        11746.467163085938,
+        12388.066953778076,
+        12001.81396484375
+      ],
+      "jump_trial_uv": 12387.857312747192
+    },
+    "recording_decision": {
+      "indicator": "ACCEPT",
+      "accepted": true,
+      "rule": "at least one retained trial and no more than 33% rejected",
+      "drop_rate": 0.0,
+      "first_rejecting_step": null
+    },
+    "rejection_steps": [
+      {
+        "step": 1,
+        "reason": "amplitude",
+        "rule": "adaptive robust amplitude/peer/clipping limit",
+        "failed_trials": 0,
+        "passed_trials": 119,
+        "indicator": "PASS"
+      },
+      {
+        "step": 2,
+        "reason": "flat",
+        "rule": "channel SD < 0.05 \u00b5V",
+        "failed_trials": 0,
+        "passed_trials": 119,
+        "indicator": "PASS"
+      },
+      {
+        "step": 3,
+        "reason": "jump",
+        "rule": "adaptive robust sample-jump/peer limit",
+        "failed_trials": 0,
+        "passed_trials": 119,
+        "indicator": "PASS"
+      },
+      {
+        "step": 4,
+        "reason": "outlier",
+        "rule": "within-class robust z > 4.0",
+        "failed_trials": 0,
+        "passed_trials": 119,
+        "indicator": "PASS"
+      },
+      {
+        "step": 5,
+        "reason": "noncompliant",
+        "rule": "cue/trial marked noncompliant",
+        "failed_trials": 0,
+        "passed_trials": 119,
+        "indicator": "PASS"
+      }
+    ],
+    "trial_rejection_indicators": [
+      {
+        "trial": 1,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 2,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 3,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 4,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 5,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 6,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 7,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 8,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 9,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 10,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 11,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 12,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 13,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 14,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 15,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 16,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 17,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 18,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 19,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 20,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 21,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 22,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 23,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 24,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 25,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 26,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 27,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 28,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 29,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 30,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 31,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 32,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 33,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 34,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 35,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 36,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 37,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 38,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 39,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 40,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 41,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 42,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 43,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 44,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 45,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 46,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 47,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 48,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 49,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 50,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 51,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 52,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 53,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 54,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 55,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 56,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 57,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 58,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 59,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 60,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 61,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 62,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 63,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 64,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 65,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 66,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 67,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 68,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 69,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 70,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 71,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 72,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 73,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 74,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 75,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 76,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 77,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 78,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 79,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 80,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 81,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 82,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 83,
+        "label": "intent::left_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 84,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 85,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 86,
+        "label": "intent::left_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 87,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 88,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 89,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 90,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 91,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 92,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 93,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 94,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 95,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 96,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 97,
+        "label": "intent::right_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 98,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 99,
+        "label": "intent::left_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 100,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 101,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 102,
+        "label": "intent::right_thumb",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 103,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 104,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 105,
+        "label": "intent::right_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 106,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 107,
+        "label": "intent::right_ring",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 108,
+        "label": "intent::right_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 109,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 110,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 111,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 112,
+        "label": "intent::right_middle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 113,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 114,
+        "label": "intent::both_feet",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 115,
+        "label": "intent::left_pinky",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 116,
+        "label": "intent::left_hand",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 117,
+        "label": "intent::idle",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 118,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      },
+      {
+        "trial": 119,
+        "label": "intent::left_index",
+        "indicator": "ACCEPT",
+        "accepted": true,
+        "rejected_by": [],
+        "channel_failures": {}
+      }
+    ],
+    "trial_signal_metrics": {
+      "peak_median_uv": 2899.8705444335938,
+      "peak_max_uv": 3841.929656982422,
+      "jump_median_uv": 3029.0191040039062,
+      "jump_max_uv": 3989.7862548828125
+    },
+    "channel_diagnostics": [
+      {
+        "index": 0,
+        "label": "F3",
+        "peak_median_uv": 2737.3287353515625,
+        "peak_p95_uv": 3642.540761566162,
+        "peak_max_uv": 3791.8392944335938,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 10949.31494140625,
+        "std_median_uv": 1474.0892958505838,
+        "std_min_uv": 1119.5105599865337,
+        "std_max_uv": 2225.1221772707795,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2812.564697265625,
+        "jump_p95_uv": 3779.487805175781,
+        "jump_max_uv": 3882.229881286621,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 11521.41247758789
+      },
+      {
+        "index": 1,
+        "label": "C3",
+        "peak_median_uv": 2363.9652853012085,
+        "peak_p95_uv": 3496.595129394531,
+        "peak_max_uv": 3709.1602630615234,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 11262.499101987456,
+        "std_median_uv": 1153.5650950584018,
+        "std_min_uv": 796.9535827459617,
+        "std_max_uv": 2230.3187443951856,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2328.560028076172,
+        "jump_p95_uv": 3798.786264038086,
+        "jump_max_uv": 3865.868118286133,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 12502.40681989746
+      },
+      {
+        "index": 2,
+        "label": "CZ",
+        "peak_median_uv": 2807.4014892578125,
+        "peak_p95_uv": 3687.146026611328,
+        "peak_max_uv": 3828.7197265625,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 11229.60595703125,
+        "std_median_uv": 1486.6484165953457,
+        "std_min_uv": 1128.5608082501572,
+        "std_max_uv": 2286.1930746262624,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2892.0921936035156,
+        "jump_p95_uv": 3877.73708114624,
+        "jump_max_uv": 3929.97314453125,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 12538.632532250977
+      },
+      {
+        "index": 3,
+        "label": "P3",
+        "peak_median_uv": 2503.6412048339844,
+        "peak_p95_uv": 3597.6337829589843,
+        "peak_max_uv": 3784.731201171875,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 11071.71831408081,
+        "std_median_uv": 1239.3670168674696,
+        "std_min_uv": 888.721890765025,
+        "std_max_uv": 2326.575932288302,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2482.7869873046875,
+        "jump_p95_uv": 3875.6316329956053,
+        "jump_max_uv": 3989.7862548828125,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 12606.524903417969
+      },
+      {
+        "index": 4,
+        "label": "PZ",
+        "peak_median_uv": 2674.833282470703,
+        "peak_p95_uv": 3585.0745803833006,
+        "peak_max_uv": 3708.2886352539062,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 10699.333129882812,
+        "std_median_uv": 1398.572362992999,
+        "std_min_uv": 1051.4526132209276,
+        "std_max_uv": 2271.56428950808,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2730.2207946777344,
+        "jump_p95_uv": 3815.268464422226,
+        "jump_max_uv": 3904.626220703125,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 12131.002809106445
+      },
+      {
+        "index": 5,
+        "label": "F4",
+        "peak_median_uv": 2843.946533203125,
+        "peak_p95_uv": 3674.1036865234373,
+        "peak_max_uv": 3807.2621459960938,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 11375.7861328125,
+        "std_median_uv": 1548.1598242999648,
+        "std_min_uv": 1194.194147888913,
+        "std_max_uv": 2235.5180203804657,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2936.6167907714844,
+        "jump_p95_uv": 3813.4176452636716,
+        "jump_max_uv": 3897.7865600585938,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 11746.467163085938
+      },
+      {
+        "index": 6,
+        "label": "C4",
+        "peak_median_uv": 2773.73974609375,
+        "peak_p95_uv": 3664.883679199219,
+        "peak_max_uv": 3799.01416015625,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 11094.958984375,
+        "std_median_uv": 1481.4601944793262,
+        "std_min_uv": 1126.5497793618931,
+        "std_max_uv": 2254.2983534192354,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 2870.366355895996,
+        "jump_p95_uv": 3879.3866943359376,
+        "jump_max_uv": 3938.9586791992188,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 12388.066953778076
+      },
+      {
+        "index": 7,
+        "label": "P4",
+        "peak_median_uv": 2894.7744750976562,
+        "peak_p95_uv": 3709.7100463867187,
+        "peak_max_uv": 3841.929656982422,
+        "amplitude_fail_trials": 0,
+        "adaptive_amplitude_limit_uv": 11579.097900390625,
+        "std_median_uv": 1594.107096616825,
+        "std_min_uv": 1240.7438136784272,
+        "std_max_uv": 2251.191207155256,
+        "flat_fail_trials": 0,
+        "jump_median_uv": 3000.4534912109375,
+        "jump_p95_uv": 3834.5936584472656,
+        "jump_max_uv": 3930.5097045898438,
+        "jump_fail_trials": 0,
+        "adaptive_jump_limit_uv": 12001.81396484375
+      }
+    ],
+    "class_counts": {
+      "intent::both_feet": 8,
+      "intent::idle": 15,
+      "intent::left_hand": 8,
+      "intent::left_index": 8,
+      "intent::left_middle": 8,
+      "intent::left_pinky": 8,
+      "intent::left_ring": 8,
+      "intent::left_thumb": 8,
+      "intent::right_hand": 8,
+      "intent::right_index": 8,
+      "intent::right_middle": 8,
+      "intent::right_pinky": 8,
+      "intent::right_ring": 8,
+      "intent::right_thumb": 8
+    },
+    "retained_counts": {
+      "intent::both_feet": 8,
+      "intent::idle": 15,
+      "intent::left_hand": 8,
+      "intent::left_index": 8,
+      "intent::left_middle": 8,
+      "intent::left_pinky": 8,
+      "intent::left_ring": 8,
+      "intent::left_thumb": 8,
+      "intent::right_hand": 8,
+      "intent::right_index": 8,
+      "intent::right_middle": 8,
+      "intent::right_pinky": 8,
+      "intent::right_ring": 8,
+      "intent::right_thumb": 8
+    },
+    "model": null,
+    "model_error": null,
+    "training_accuracy": null,
+    "training_balanced_accuracy": null,
+    "confusion_matrix": null,
+    "warning": "model metrics use training recordings and are not held-session or held-subject validation",
+    "acquisition": {
+      "backend": "brainflow",
+      "board_id": 0,
+      "board_rows": 24,
+      "channel_labels": [],
+      "cyton_gain": 4,
+      "cyton_profile": "thinkpulse_active",
+      "descriptor_board_id": 0,
+      "eeg_channel_rows": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "electrode_mode": "thinkpulse",
+      "filtered": false,
+      "fs": 250.0,
+      "master_board": -1,
+      "n_channels": 8,
+      "package_num_row": 0,
+      "profile_settings": {
+        "description": "Powered ThinkPulse active-electrode profile",
+        "electrode_mode": "thinkpulse",
+        "gain": 4,
+        "include_bias": false,
+        "input": "normal",
+        "maximum_gain": 8,
+        "name": "thinkpulse_active",
+        "physical_bias_expected": false,
+        "reference": "SRB2",
+        "srb1": false,
+        "srb2": true
+      },
+      "route": "direct_cyton",
+      "stream_buffer_size": 450000,
+      "timestamp_row": 22,
+      "units": "uV"
+    },
+    "verdict": "CANDIDATE: passes software quality/count checks",
+    "level": "good",
+    "has_motor_core": true,
+    "missing_universal_labels": [],
+    "partial_universal": false
+  }
+]
